@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars and fill in your values.
+
+aws_region        = "us-east-1"
+domain_name       = "iou.example.com"
+mail_from_address = "no-reply@iou.example.com"
+app_image_tag     = "latest"
+project_name      = "iou"

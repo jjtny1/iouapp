@@ -9,6 +9,9 @@ type Config struct {
 	AnthropicKey    string
 	DevMode         bool
 	PaymentProvider string
+	MailProvider    string
+	MailFrom        string
+	AWSRegion       string
 }
 
 func Load() Config {
@@ -19,6 +22,9 @@ func Load() Config {
 		AnthropicKey:    os.Getenv("ANTHROPIC_API_KEY"),
 		DevMode:         boolEnv("IOU_DEV"),
 		PaymentProvider: env("IOU_PAYMENT_PROVIDER", "mock"),
+		MailProvider:    env("IOU_MAIL_PROVIDER", "log"),
+		MailFrom:        os.Getenv("IOU_MAIL_FROM"),
+		AWSRegion:       os.Getenv("AWS_REGION"),
 	}
 }
 

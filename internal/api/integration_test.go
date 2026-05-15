@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jjtny1/splitit/internal/auth"
 	"github.com/jjtny1/splitit/internal/config"
 	"github.com/jjtny1/splitit/internal/db"
 )
@@ -42,7 +43,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		DevMode:         true,
 		PaymentProvider: "mock",
 	}
-	srv := httptest.NewServer(NewRouter(database, cfg))
+	srv := httptest.NewServer(NewRouter(database, cfg, auth.LogSender{}))
 	t.Cleanup(srv.Close)
 	return &testEnv{t: t, server: srv, url: srv.URL}
 }
