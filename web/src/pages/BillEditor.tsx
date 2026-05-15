@@ -137,7 +137,7 @@ export default function BillEditor() {
   if (loading) {
     return (
       <main className="app">
-        <h1>splitit</h1>
+        <h1>IOU</h1>
         <p>Loading…</p>
       </main>
     );
@@ -146,7 +146,7 @@ export default function BillEditor() {
   if (!bill) {
     return (
       <main className="app">
-        <h1>splitit</h1>
+        <h1>IOU</h1>
         <p className="error">{error ?? "Bill not found."}</p>
         <Link to="/">Back</Link>
       </main>
@@ -162,7 +162,7 @@ export default function BillEditor() {
 
   return (
     <main className="app">
-      <h1>splitit</h1>
+      <h1>IOU</h1>
       <Link to="/">← Back</Link>
 
       {bill.share_url && (

@@ -32,7 +32,7 @@ export default function Verify() {
 
   return (
     <main className="app">
-      <h1>splitit</h1>
+      <h1>IOU</h1>
       {error ? <p className="error">{error}</p> : <p>Signing you in…</p>}
     </main>
   );

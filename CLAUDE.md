@@ -15,7 +15,7 @@
 
 ## Project
 
-**What**: splitit — split a restaurant bill with friends. The host uploads a
+**What**: IOU — split a restaurant bill with friends. The host uploads a
 receipt photo, it's parsed into line items/tax/tip, friends open a share link
 and claim what they ordered, and each settles their prorated share.
 
@@ -27,7 +27,7 @@ Packages: `internal/{api,auth,db,config,receipt,payment,split}`.
 
 | Command                                           | Description                      |
 | ------------------------------------------------- | -------------------------------- |
-| `SPLITIT_DEV=1 go run ./cmd/server`               | Start API on :8080 (dev mode)    |
+| `IOU_DEV=1 go run ./cmd/server`                   | Start API on :8080 (dev mode)    |
 | `cd web && npm run dev`                           | Start Vite dev server on :5173   |
 | `go test ./...`                                   | Run Go tests                     |
 | `cd web && npm run build`                         | Build the frontend to `web/dist` |
@@ -45,13 +45,13 @@ frontend (`cd web && npm run build`) and hit the Go server directly — no Vite
 proxy needed. Run on a non-default port if other agents may be using `:8080`:
 
 ```bash
-SPLITIT_DEV=1 PORT=8099 SPLITIT_BASE_URL=http://localhost:8099 \
-  SPLITIT_DB=/tmp/splitit-test.db ANTHROPIC_API_KEY=sk-ant-... \
+IOU_DEV=1 PORT=8099 IOU_BASE_URL=http://localhost:8099 \
+  IOU_DB=/tmp/iou-test.db ANTHROPIC_API_KEY=sk-ant-... \
   go run ./cmd/server
 ```
 
 - **Magic-link sign-in via API.** `POST /api/auth/request {"email":...}` returns
-  the dev link in its JSON (`SPLITIT_DEV=1`). Extract the `token` from it and
+  the dev link in its JSON (`IOU_DEV=1`). Extract the `token` from it and
   `POST /api/auth/verify {"token":...}` with a curl cookie jar (`-c`/`-b`) to
   get a session. The browser SignIn page shows the same dev link on screen.
 - **Receipt upload can't be driven through the browser.** The Chrome extension
@@ -120,7 +120,7 @@ SPLITIT_DEV=1 PORT=8099 SPLITIT_BASE_URL=http://localhost:8099 \
   each friend claim their own unit (e.g. two people each pick one of two
   Cokes) instead of sharing a single multi-quantity checkbox. The `items`
   table has no `qty` column.
-- **Auth is magic-link.** In `SPLITIT_DEV=1` the link is returned in the JSON
+- **Auth is magic-link.** In `IOU_DEV=1` the link is returned in the JSON
   response; otherwise it's only logged server-side (no email delivery yet).
 - **The verify page can race the auth bootstrap.** `AuthProvider`'s initial
   `GET /api/auth/me` (run unauthenticated on first paint) can resolve _after_

@@ -14,11 +14,11 @@ type Config struct {
 func Load() Config {
 	return Config{
 		Port:            env("PORT", "8080"),
-		DBPath:          env("SPLITIT_DB", "splitit.db"),
-		BaseURL:         env("SPLITIT_BASE_URL", "http://localhost:8080"),
+		DBPath:          env("IOU_DB", "iou.db"),
+		BaseURL:         env("IOU_BASE_URL", "http://localhost:8080"),
 		AnthropicKey:    os.Getenv("ANTHROPIC_API_KEY"),
-		DevMode:         boolEnv("SPLITIT_DEV"),
-		PaymentProvider: env("SPLITIT_PAYMENT_PROVIDER", "mock"),
+		DevMode:         boolEnv("IOU_DEV"),
+		PaymentProvider: env("IOU_PAYMENT_PROVIDER", "mock"),
 	}
 }
 

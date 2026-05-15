@@ -1,4 +1,4 @@
-# splitit
+# IOU
 
 Split a restaurant bill with friends. Upload a receipt, it's parsed into line
 items, friends open a link and claim what they ordered, and each person settles
@@ -40,7 +40,7 @@ their share in stablecoin.
 
 ```bash
 # terminal 1 — API on :8080
-SPLITIT_DEV=1 go run ./cmd/server
+IOU_DEV=1 go run ./cmd/server
 
 # terminal 2 — Vite dev server on :5173, proxies /api to :8080
 cd web && npm install && npm run dev
@@ -50,25 +50,25 @@ cd web && npm install && npm run dev
 
 ```bash
 cd web && npm install && npm run build   # outputs web/dist
-go build -o splitit ./cmd/server
-./splitit                                 # serves API + frontend on :8080
+go build -o iou ./cmd/server
+./iou                                     # serves API + frontend on :8080
 ```
 
 ## Configuration
 
 All configuration is via environment variables:
 
-| Variable                   | Default                 | Purpose                                                                 |
-| -------------------------- | ----------------------- | ----------------------------------------------------------------------- |
-| `PORT`                     | `8080`                  | HTTP listen port                                                        |
-| `SPLITIT_DB`               | `splitit.db`            | SQLite database file path                                               |
-| `SPLITIT_BASE_URL`         | `http://localhost:8080` | Base URL used in magic links and share links                            |
-| `SPLITIT_DEV`              | unset                   | `1`/`true` enables dev mode (magic link in response, non-Secure cookie) |
-| `ANTHROPIC_API_KEY`        | unset                   | Enables real receipt parsing; falls back to a stub                      |
-| `SPLITIT_PAYMENT_PROVIDER` | `mock`                  | Payment backend (`mock`; `x402` reserved)                               |
+| Variable               | Default                 | Purpose                                                                 |
+| ---------------------- | ----------------------- | ----------------------------------------------------------------------- |
+| `PORT`                 | `8080`                  | HTTP listen port                                                        |
+| `IOU_DB`               | `iou.db`                | SQLite database file path                                               |
+| `IOU_BASE_URL`         | `http://localhost:8080` | Base URL used in magic links and share links                            |
+| `IOU_DEV`              | unset                   | `1`/`true` enables dev mode (magic link in response, non-Secure cookie) |
+| `ANTHROPIC_API_KEY`    | unset                   | Enables real receipt parsing; falls back to a stub                      |
+| `IOU_PAYMENT_PROVIDER` | `mock`                  | Payment backend (`mock`; `x402` reserved)                               |
 
 Without `ANTHROPIC_API_KEY` the app uses a sample-receipt stub, so the full
-flow is usable without external services. Without `SPLITIT_DEV`, magic links
+flow is usable without external services. Without `IOU_DEV`, magic links
 are only logged server-side (no email delivery is wired up yet).
 
 ## Tests
