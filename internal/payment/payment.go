@@ -42,25 +42,28 @@ func amountParam(cents int) string {
 	return fmt.Sprintf("%d.%02d", cents/100, cents%100)
 }
 
-// payValues builds the query parameters shared by the app and web pay links.
-func payValues(handle string, amountCents int, note string) url.Values {
+// payQuery builds the query string shared by the app and web pay links.
+// Spaces are percent-encoded as %20 rather than "+": Venmo's deep-link
+// parser does not treat "+" as a space, so form-style encoding would show a
+// literal "+" between every word of the note.
+func payQuery(handle string, amountCents int, note string) string {
 	q := url.Values{}
 	q.Set("txn", "pay")
 	q.Set("recipients", handle)
 	q.Set("amount", amountParam(amountCents))
 	q.Set("note", note)
-	return q
+	return strings.ReplaceAll(q.Encode(), "+", "%20")
 }
 
 // AppURL builds a venmo:// deep link that opens the Venmo app prefilled to pay
-// handle the given amount with note. It is the link offered on phones.
+// handle the given amount with note. It is the link offered on phones and
+// encoded into the desktop QR code.
 func AppURL(handle string, amountCents int, note string) string {
-	return "venmo://paycharge?" + payValues(handle, amountCents, note).Encode()
+	return "venmo://paycharge?" + payQuery(handle, amountCents, note)
 }
 
-// WebURL builds an https://venmo.com pay link for desktop browsers and QR
-// codes. Scanned from a phone it opens the Venmo app; on a desktop browser it
-// opens Venmo's web pay flow.
+// WebURL builds an https://venmo.com pay link for desktop browsers. On a
+// desktop with no Venmo app it opens Venmo's web pay flow.
 func WebURL(handle string, amountCents int, note string) string {
-	return "https://account.venmo.com/pay?" + payValues(handle, amountCents, note).Encode()
+	return "https://account.venmo.com/pay?" + payQuery(handle, amountCents, note)
 }

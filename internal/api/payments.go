@@ -142,13 +142,14 @@ func (s *Server) hostVenmoHandle(ctx context.Context, hostUserID string) (string
 	return strings.TrimSpace(handle.String), nil
 }
 
-// paymentNote is the memo prefilled into the Venmo transfer.
+// paymentNote is the memo prefilled into the Venmo transfer, written from the
+// paying friend's point of view.
 func paymentNote(b bill) string {
 	name := strings.TrimSpace(b.Restaurant)
 	if name == "" {
-		name = "Bill split"
+		return "My share of the bill 🧾"
 	}
-	return name + " · split with IOU"
+	return "My share of " + name + " 🧾"
 }
 
 // insertPayment creates a payment row, supplying constant values for the

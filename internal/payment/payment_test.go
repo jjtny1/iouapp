@@ -33,9 +33,14 @@ func TestNormalizeHandle(t *testing.T) {
 }
 
 func TestAppURL(t *testing.T) {
-	got := AppURL("host-venmo", 1234, "Dinner · split with IOU")
+	const note = "My share of Dinner 🧾"
+	got := AppURL("host-venmo", 1234, note)
 	if !strings.HasPrefix(got, "venmo://paycharge?") {
 		t.Fatalf("AppURL = %q, want a venmo://paycharge link", got)
+	}
+	// Spaces must be %20-encoded — Venmo shows a literal "+" otherwise.
+	if strings.Contains(got, "+") {
+		t.Errorf("AppURL = %q, contains '+'; spaces must be %%20-encoded", got)
 	}
 	q := mustQuery(t, got)
 	if q.Get("txn") != "pay" {
@@ -47,8 +52,8 @@ func TestAppURL(t *testing.T) {
 	if q.Get("amount") != "12.34" {
 		t.Errorf("amount = %q, want 12.34", q.Get("amount"))
 	}
-	if q.Get("note") != "Dinner · split with IOU" {
-		t.Errorf("note = %q", q.Get("note"))
+	if q.Get("note") != note {
+		t.Errorf("note = %q, want %q", q.Get("note"), note)
 	}
 }
 

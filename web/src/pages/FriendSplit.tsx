@@ -642,7 +642,11 @@ export default function FriendSplit() {
                       alignItems: "center",
                     }}
                   >
-                    <QrCode value={intent.web_url} />
+                    {/* The QR encodes the venmo:// app link so a phone
+                        camera opens it straight in the Venmo app; the web
+                        link below is the fallback for paying on the desktop
+                        itself, which has no app. */}
+                    <QrCode value={intent.app_url} />
                     <p
                       className="body muted center"
                       style={{ fontSize: 11, marginTop: 8 }}
