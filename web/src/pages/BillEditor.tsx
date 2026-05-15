@@ -2,6 +2,7 @@ import { useEffect, useState, type ChangeEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, type Bill, type BillSummary } from "../api";
 import { useAuth } from "../auth";
+import { prepareReceiptImage } from "../image";
 
 interface DraftItem {
   name: string;
@@ -73,9 +74,11 @@ export default function BillEditor() {
     setError(null);
     setParsing(true);
     try {
-      const updated = await api.uploadReceipt(id, file);
+      const prepared = await prepareReceiptImage(file);
+      const updated = await api.uploadReceipt(id, prepared);
       loadFromBill(updated);
     } catch (err) {
+      console.error("[receipt upload]", err);
       setError(err instanceof Error ? err.message : "upload failed");
     } finally {
       setParsing(false);
@@ -183,14 +186,13 @@ export default function BillEditor() {
           ) : (
             <input
               type="file"
-              accept="image/*"
-              capture="environment"
+              accept="image/*,.heic,.heif"
               onChange={onUpload}
             />
           )}
         </section>
       ) : (
-        <section>
+        <section className="bill-editor">
           <label htmlFor="restaurant">Restaurant</label>
           <input
             id="restaurant"
