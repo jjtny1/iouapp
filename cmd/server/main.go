@@ -31,7 +31,7 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("splitit listening on http://localhost:%s", cfg.Port)
+		log.Printf("IOU listening on http://localhost:%s", cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("server: %v", err)
 		}

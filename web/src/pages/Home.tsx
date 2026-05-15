@@ -55,7 +55,7 @@ export default function Home() {
 
   return (
     <main className="app">
-      <h1>splitit</h1>
+      <h1>IOU</h1>
       <p>
         Signed in as <strong>{user.email}</strong>
       </p>

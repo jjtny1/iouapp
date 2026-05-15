@@ -26,7 +26,7 @@ export default function SignIn() {
   if (sent) {
     return (
       <main className="app">
-        <h1>splitit</h1>
+        <h1>IOU</h1>
         <p>Check your email for a sign-in link.</p>
         {devLink && (
           <p>
@@ -39,7 +39,7 @@ export default function SignIn() {
 
   return (
     <main className="app">
-      <h1>splitit</h1>
+      <h1>IOU</h1>
       <p>Sign in to split the bill with friends.</p>
       <form onSubmit={onSubmit}>
         <input

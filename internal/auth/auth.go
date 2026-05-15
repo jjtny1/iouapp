@@ -15,7 +15,7 @@ const (
 	// SessionTTL is how long a session cookie remains valid.
 	SessionTTL = 30 * 24 * time.Hour
 	// SessionCookie is the name of the session cookie.
-	SessionCookie = "splitit_session"
+	SessionCookie = "iou_session"
 )
 
 // NewToken returns a cryptographically random URL-safe token.
