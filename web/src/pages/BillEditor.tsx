@@ -126,7 +126,7 @@ function ParsingView() {
 
 export default function BillEditor() {
   const { id } = useParams<{ id: string }>();
-  const { user } = useAuth();
+  const { user, setUser } = useAuth();
   const navigate = useNavigate();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -149,6 +149,8 @@ export default function BillEditor() {
   const [scFixedDollars, setScFixedDollars] = useState("0.00");
   const [scHeadcount, setScHeadcount] = useState("");
   const [summary, setSummary] = useState<BillSummary | null>(null);
+  const [venmoHandle, setVenmoHandle] = useState(user?.venmo_handle ?? "");
+  const [savingHandle, setSavingHandle] = useState(false);
 
   function loadFromBill(b: Bill) {
     setBill(b);
@@ -286,6 +288,34 @@ export default function BillEditor() {
       showToast("Link copied");
     } catch {
       showToast("Couldn't copy");
+    }
+  }
+
+  // saveVenmoHandle stores the host's Venmo handle on their account, so every
+  // new tab reuses it and friends know where to send their share.
+  async function saveVenmoHandle() {
+    setError(null);
+    setSavingHandle(true);
+    try {
+      const updated = await api.updateVenmoHandle(venmoHandle);
+      setUser(updated);
+      setVenmoHandle(updated.venmo_handle ?? "");
+      showToast("Venmo handle saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "could not save handle");
+    } finally {
+      setSavingHandle(false);
+    }
+  }
+
+  // togglePaid lets the host confirm or undo a friend's payment.
+  async function togglePaid(participantId: string, paid: boolean) {
+    if (!id) return;
+    setError(null);
+    try {
+      setSummary(await api.markPayment(id, participantId, paid));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "could not update payment");
     }
   }
 
@@ -642,6 +672,38 @@ export default function BillEditor() {
           {saving ? "Saving…" : "Save tab"}
         </button>
 
+        {/* Venmo handle — friends pay their share straight to it */}
+        <div className="card mt-8">
+          <div className="row row-between">
+            <span className="eyebrow">Your Venmo</span>
+            <span className="eyebrow muted">
+              {user?.venmo_handle ? "set ✓" : "needed"}
+            </span>
+          </div>
+          <p className="body muted mt-2" style={{ fontSize: 12 }}>
+            {user?.venmo_handle
+              ? "Friends pay their share straight to this handle."
+              : "Set it once — every new tab reuses it automatically."}
+          </p>
+          <div className="row gap-2 mt-3">
+            <input
+              className="input input-mono"
+              style={{ flex: 1 }}
+              type="text"
+              placeholder="@your-venmo"
+              value={venmoHandle}
+              onChange={(e) => setVenmoHandle(e.target.value)}
+            />
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={saveVenmoHandle}
+              disabled={savingHandle}
+            >
+              {savingHandle ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+
         {/* Share */}
         <h2 className="h-section mt-8">Send it round.</h2>
         <p className="body muted mt-2">
@@ -718,11 +780,20 @@ export default function BillEditor() {
                   <span className="mono" style={{ fontSize: 13 }}>
                     {fmt(share?.total_cents ?? 0)}
                   </span>
-                  {isPaid ? (
-                    <span className="tag">PAID</span>
-                  ) : (
-                    <span className="pulse-dot" />
-                  )}
+                  <button
+                    className="btn btn-sm"
+                    onClick={() => togglePaid(p.id, !isPaid)}
+                    title={isPaid ? "Tap to mark unpaid" : "Tap to mark paid"}
+                    style={{
+                      flexShrink: 0,
+                      padding: "5px 11px",
+                      background: isPaid ? "var(--accent)" : "transparent",
+                      color: isPaid ? "var(--ink)" : "var(--muted)",
+                      border: isPaid ? "0" : "1px solid var(--line)",
+                    }}
+                  >
+                    {isPaid ? "Paid ✓" : "Mark paid"}
+                  </button>
                 </div>
               );
             })}
@@ -731,10 +802,9 @@ export default function BillEditor() {
 
         {summary && joined.length > 0 && (
           <>
-            {!user?.wallet_address && (
+            {!user?.venmo_handle && (
               <p className="body danger mt-4" style={{ fontSize: 12 }}>
-                Friends can't pay until you set a payout wallet on your Tabs
-                page.
+                Friends can't pay until you add your Venmo handle above.
               </p>
             )}
             <hr className="dash mt-4" />

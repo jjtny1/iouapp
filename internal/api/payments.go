@@ -14,36 +14,30 @@ import (
 	"github.com/jjtny1/splitit/internal/split"
 )
 
+// paymentRow mirrors a row of the payments table. The table also carries
+// vestigial provider/tx_ref columns from the earlier USDC design; they are
+// always written as 'venmo'/NULL and never read back, so they are absent here.
 type paymentRow struct {
 	ID            string
 	BillID        string
 	ParticipantID string
 	AmountCents   int
 	Currency      string
-	Recipient     string
-	Status        string
-	Provider      string
-	TxRef         sql.NullString
+	Recipient     string // the host's Venmo handle
+	Status        string // "pending" or "paid"
 	CreatedAt     int64
 	UpdatedAt     int64
 }
 
 func (p paymentRow) json() map[string]any {
-	out := map[string]any{
+	return map[string]any{
 		"id":             p.ID,
 		"participant_id": p.ParticipantID,
 		"amount_cents":   p.AmountCents,
 		"currency":       p.Currency,
 		"status":         p.Status,
-		"provider":       p.Provider,
 		"recipient":      p.Recipient,
 	}
-	if p.TxRef.Valid {
-		out["tx_ref"] = p.TxRef.String
-	} else {
-		out["tx_ref"] = nil
-	}
-	return out
 }
 
 // participantByToken resolves a participant_token to its id, verifying the
@@ -60,6 +54,20 @@ func (s *Server) participantByToken(ctx context.Context, billID, token string) (
 		return "", sql.ErrNoRows
 	}
 	return id, nil
+}
+
+// participantInBill reports whether participant id belongs to billID.
+func (s *Server) participantInBill(ctx context.Context, billID, id string) (bool, error) {
+	var partBill string
+	err := s.DB.QueryRowContext(ctx,
+		`SELECT bill_id FROM participants WHERE id = ?`, id).Scan(&partBill)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return partBill == billID, nil
 }
 
 // amountOwed computes a participant's current share of a bill by reusing the
@@ -114,29 +122,53 @@ func (s *Server) loadPayment(ctx context.Context, participantID string) (payment
 	var p paymentRow
 	err := s.DB.QueryRowContext(ctx,
 		`SELECT id, bill_id, participant_id, amount_cents, currency, recipient,
-		        status, provider, tx_ref, created_at, updated_at
+		        status, created_at, updated_at
 		 FROM payments WHERE participant_id = ?`, participantID).
 		Scan(&p.ID, &p.BillID, &p.ParticipantID, &p.AmountCents, &p.Currency,
-			&p.Recipient, &p.Status, &p.Provider, &p.TxRef, &p.CreatedAt, &p.UpdatedAt)
+			&p.Recipient, &p.Status, &p.CreatedAt, &p.UpdatedAt)
 	return p, err
 }
 
-// hostWallet returns the host's payout wallet address for a bill.
-func (s *Server) hostWallet(ctx context.Context, hostUserID string) (string, error) {
-	var wallet sql.NullString
+// hostVenmoHandle returns the host's Venmo handle for a bill, or "" if unset.
+func (s *Server) hostVenmoHandle(ctx context.Context, hostUserID string) (string, error) {
+	var handle sql.NullString
 	if err := s.DB.QueryRowContext(ctx,
-		`SELECT wallet_address FROM users WHERE id = ?`, hostUserID).Scan(&wallet); err != nil {
+		`SELECT venmo_handle FROM users WHERE id = ?`, hostUserID).Scan(&handle); err != nil {
 		return "", err
 	}
-	if !wallet.Valid || strings.TrimSpace(wallet.String) == "" {
+	if !handle.Valid {
 		return "", nil
 	}
-	return strings.TrimSpace(wallet.String), nil
+	return strings.TrimSpace(handle.String), nil
 }
 
-// handlePay initiates a payment for a friend and responds with an HTTP 402
-// payment challenge. If the friend has already paid it returns the existing
-// paid payment with HTTP 200 (idempotent).
+// paymentNote is the memo prefilled into the Venmo transfer.
+func paymentNote(b bill) string {
+	name := strings.TrimSpace(b.Restaurant)
+	if name == "" {
+		name = "Bill split"
+	}
+	return name + " · split with IOU"
+}
+
+// insertPayment creates a payment row, supplying constant values for the
+// vestigial provider/tx_ref columns.
+func (s *Server) insertPayment(ctx context.Context, p paymentRow) error {
+	_, err := s.DB.ExecContext(ctx,
+		`INSERT INTO payments (id, bill_id, participant_id, amount_cents, currency,
+		        recipient, status, provider, tx_ref, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 'venmo', NULL, ?, ?)`,
+		p.ID, p.BillID, p.ParticipantID, p.AmountCents, p.Currency,
+		p.Recipient, p.Status, p.CreatedAt, p.UpdatedAt)
+	return err
+}
+
+// handlePay prepares a Venmo payment for a friend and responds with a payment
+// intent: the host's handle, the amount owed, and ready-made app/web links.
+// Venmo cannot report settlement back, so this never blocks — the friend
+// settles in Venmo and the payment is marked paid separately (handlePayConfirm
+// or handleMarkPayment). If the friend has already paid the paid intent is
+// returned unchanged (idempotent).
 func (s *Server) handlePay(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
@@ -177,19 +209,19 @@ func (s *Server) handlePay(w http.ResponseWriter, r *http.Request) {
 	}
 	hasExisting := err == nil
 	if hasExisting && existing.Status == "paid" {
-		writeJSON(w, http.StatusOK, existing.json())
+		writeJSON(w, http.StatusOK, s.paymentIntent(existing, b))
 		return
 	}
 
-	wallet, err := s.hostWallet(r.Context(), b.hostUserID)
+	handle, err := s.hostVenmoHandle(r.Context(), b.hostUserID)
 	if err != nil {
-		log.Printf("pay: host wallet: %v", err)
+		log.Printf("pay: host handle: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-	if wallet == "" {
+	if handle == "" {
 		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "the host has not set a payout address yet",
+			"error": "the host hasn't set their Venmo handle yet",
 		})
 		return
 	}
@@ -204,68 +236,67 @@ func (s *Server) handlePay(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().Unix()
 	var p paymentRow
 	if !hasExisting {
-		// The payment settles in the stablecoin advertised by payment.Currency
-		// (USDC). When the bill's own currency is not USD, amount is still its
-		// raw owed value — FX conversion from the bill currency to the
-		// settlement currency is intentionally deferred to the planned x402
-		// work and is not applied here.
 		p = paymentRow{
 			ID:            uuid.NewString(),
 			BillID:        b.ID,
 			ParticipantID: participantID,
 			AmountCents:   amount,
-			Currency:      payment.Currency,
-			Recipient:     wallet,
+			Currency:      b.Currency,
+			Recipient:     handle,
 			Status:        "pending",
-			Provider:      s.Payment.Name(),
 			CreatedAt:     now,
 			UpdatedAt:     now,
 		}
-		if _, err := s.DB.ExecContext(r.Context(),
-			`INSERT INTO payments (id, bill_id, participant_id, amount_cents, currency,
-			        recipient, status, provider, tx_ref, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
-			p.ID, p.BillID, p.ParticipantID, p.AmountCents, p.Currency,
-			p.Recipient, p.Status, p.Provider, p.CreatedAt, p.UpdatedAt); err != nil {
+		if err := s.insertPayment(r.Context(), p); err != nil {
 			log.Printf("pay: insert: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 			return
 		}
 	} else {
-		// Reuse the pending row, refreshing the amount and recipient in case
-		// claims or the host wallet changed since it was created.
+		// Reuse the pending row, refreshing the amount and handle in case
+		// claims or the host's handle changed since it was created.
 		p = existing
 		p.AmountCents = amount
-		p.Recipient = wallet
+		p.Currency = b.Currency
+		p.Recipient = handle
 		p.UpdatedAt = now
 		if _, err := s.DB.ExecContext(r.Context(),
-			`UPDATE payments SET amount_cents = ?, recipient = ?, updated_at = ?
+			`UPDATE payments SET amount_cents = ?, currency = ?, recipient = ?, updated_at = ?
 			 WHERE id = ?`,
-			p.AmountCents, p.Recipient, p.UpdatedAt, p.ID); err != nil {
+			p.AmountCents, p.Currency, p.Recipient, p.UpdatedAt, p.ID); err != nil {
 			log.Printf("pay: update: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 			return
 		}
 	}
 
-	writeJSON(w, http.StatusPaymentRequired, payment.Challenge{
-		PaymentID:   p.ID,
-		AmountCents: p.AmountCents,
-		Currency:    p.Currency,
-		Recipient:   p.Recipient,
-		Network:     payment.Network,
-	})
+	writeJSON(w, http.StatusOK, s.paymentIntent(p, b))
 }
 
-// handlePayConfirm verifies submitted payment proof and marks the payment
-// paid on success.
+// paymentIntent renders the JSON a friend's client needs to hand off to Venmo.
+func (s *Server) paymentIntent(p paymentRow, b bill) map[string]any {
+	note := paymentNote(b)
+	return map[string]any{
+		"payment_id":   p.ID,
+		"status":       p.Status,
+		"amount_cents": p.AmountCents,
+		"currency":     p.Currency,
+		"venmo_handle": p.Recipient,
+		"note":         note,
+		"app_url":      payment.AppURL(p.Recipient, p.AmountCents, note),
+		"web_url":      payment.WebURL(p.Recipient, p.AmountCents, note),
+	}
+}
+
+// handlePayConfirm marks a friend's payment paid. Venmo provides no proof of
+// settlement, so this records the friend's self-report; it is idempotent if
+// the payment is already paid.
 func (s *Server) handlePayConfirm(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	var req struct {
 		ParticipantToken string `json:"participant_token"`
 		PaymentID        string `json:"payment_id"`
-		Proof            string `json:"proof"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -304,40 +335,125 @@ func (s *Server) handlePayConfirm(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-	if p.Status != "pending" {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "payment is not pending"})
+
+	if p.Status != "paid" {
+		now := time.Now().Unix()
+		if _, err := s.DB.ExecContext(r.Context(),
+			`UPDATE payments SET status = 'paid', updated_at = ? WHERE id = ?`,
+			now, p.ID); err != nil {
+			log.Printf("pay confirm: update: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		p.Status = "paid"
+		p.UpdatedAt = now
+	}
+	writeJSON(w, http.StatusOK, p.json())
+}
+
+// handleMarkPayment lets the host confirm or undo a friend's payment from the
+// bill editor. paid=true records the friend as paid (creating a payment row if
+// none exists); paid=false removes the payment row, returning the friend to
+// "not paid". It returns the refreshed bill summary.
+func (s *Server) handleMarkPayment(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value(userCtxKey).(user)
+	id := r.PathValue("id")
+	pid := r.PathValue("pid")
+
+	var req struct {
+		Paid bool `json:"paid"`
+	}
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
-	ch := payment.Challenge{
-		PaymentID:   p.ID,
-		AmountCents: p.AmountCents,
-		Currency:    p.Currency,
-		Recipient:   p.Recipient,
-		Network:     payment.Network,
+	b, err := s.loadBill(r.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "bill not found"})
+		return
 	}
-	txRef, err := s.Payment.Verify(r.Context(), ch, req.Proof)
 	if err != nil {
-		log.Printf("pay confirm: verify: %v", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "payment verification failed"})
+		log.Printf("mark payment: load bill: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	if b.hostUserID != u.ID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
+
+	inBill, err := s.participantInBill(r.Context(), b.ID, pid)
+	if err != nil {
+		log.Printf("mark payment: participant: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	if !inBill {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "participant not found"})
 		return
 	}
 
 	now := time.Now().Unix()
-	if _, err := s.DB.ExecContext(r.Context(),
-		`UPDATE payments SET status = 'paid', tx_ref = ?, provider = ?, updated_at = ?
-		 WHERE id = ?`,
-		txRef, s.Payment.Name(), now, p.ID); err != nil {
-		log.Printf("pay confirm: update: %v", err)
+	if req.Paid {
+		existing, err := s.loadPayment(r.Context(), pid)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("mark payment: load: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			amount, err := s.amountOwed(r.Context(), b, pid)
+			if err != nil {
+				log.Printf("mark payment: amount: %v", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+				return
+			}
+			handle, err := s.hostVenmoHandle(r.Context(), b.hostUserID)
+			if err != nil {
+				log.Printf("mark payment: handle: %v", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+				return
+			}
+			if err := s.insertPayment(r.Context(), paymentRow{
+				ID:            uuid.NewString(),
+				BillID:        b.ID,
+				ParticipantID: pid,
+				AmountCents:   amount,
+				Currency:      b.Currency,
+				Recipient:     handle,
+				Status:        "paid",
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			}); err != nil {
+				log.Printf("mark payment: insert: %v", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+				return
+			}
+		} else if existing.Status != "paid" {
+			if _, err := s.DB.ExecContext(r.Context(),
+				`UPDATE payments SET status = 'paid', updated_at = ? WHERE id = ?`,
+				now, existing.ID); err != nil {
+				log.Printf("mark payment: update: %v", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+				return
+			}
+		}
+	} else {
+		if _, err := s.DB.ExecContext(r.Context(),
+			`DELETE FROM payments WHERE participant_id = ?`, pid); err != nil {
+			log.Printf("mark payment: delete: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+	}
+
+	resp, err := s.buildSummary(r.Context(), b)
+	if err != nil {
+		log.Printf("mark payment: summary: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-
-	p.Status = "paid"
-	p.TxRef = sql.NullString{String: txRef, Valid: true}
-	p.Provider = s.Payment.Name()
-	p.UpdatedAt = now
-	writeJSON(w, http.StatusOK, p.json())
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleListPayments returns the payment rows for a bill, for the host or a
@@ -380,7 +496,7 @@ func (s *Server) handleListPayments(w http.ResponseWriter, r *http.Request) {
 func (s *Server) loadPayments(ctx context.Context, billID string) ([]paymentRow, error) {
 	rows, err := s.DB.QueryContext(ctx,
 		`SELECT id, bill_id, participant_id, amount_cents, currency, recipient,
-		        status, provider, tx_ref, created_at, updated_at
+		        status, created_at, updated_at
 		 FROM payments WHERE bill_id = ? ORDER BY created_at`, billID)
 	if err != nil {
 		return nil, err
@@ -391,8 +507,7 @@ func (s *Server) loadPayments(ctx context.Context, billID string) ([]paymentRow,
 	for rows.Next() {
 		var p paymentRow
 		if err := rows.Scan(&p.ID, &p.BillID, &p.ParticipantID, &p.AmountCents,
-			&p.Currency, &p.Recipient, &p.Status, &p.Provider, &p.TxRef,
-			&p.CreatedAt, &p.UpdatedAt); err != nil {
+			&p.Currency, &p.Recipient, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		payments = append(payments, p)

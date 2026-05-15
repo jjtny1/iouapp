@@ -9,25 +9,22 @@ import (
 	"github.com/jjtny1/splitit/internal/auth"
 	"github.com/jjtny1/splitit/internal/config"
 	"github.com/jjtny1/splitit/internal/db"
-	"github.com/jjtny1/splitit/internal/payment"
 	"github.com/jjtny1/splitit/internal/receipt"
 )
 
 type Server struct {
-	DB      *db.DB
-	Cfg     config.Config
-	Mailer  auth.EmailSender
-	Parser  receipt.Parser
-	Payment payment.Provider
+	DB     *db.DB
+	Cfg    config.Config
+	Mailer auth.EmailSender
+	Parser receipt.Parser
 }
 
 func NewRouter(database *db.DB, cfg config.Config) http.Handler {
 	s := &Server{
-		DB:      database,
-		Cfg:     cfg,
-		Mailer:  auth.LogSender{},
-		Parser:  receipt.New(cfg),
-		Payment: payment.NewProvider(cfg.PaymentProvider),
+		DB:     database,
+		Cfg:    cfg,
+		Mailer: auth.LogSender{},
+		Parser: receipt.New(cfg),
 	}
 
 	mux := http.NewServeMux()
@@ -49,6 +46,7 @@ func NewRouter(database *db.DB, cfg config.Config) http.Handler {
 	mux.HandleFunc("POST /api/bills/{id}/pay", s.handlePay)
 	mux.HandleFunc("POST /api/bills/{id}/pay/confirm", s.handlePayConfirm)
 	mux.HandleFunc("GET /api/bills/{id}/payments", s.handleListPayments)
+	mux.HandleFunc("POST /api/bills/{id}/payments/{pid}", s.requireAuth(s.handleMarkPayment))
 	mux.Handle("/", spaHandler("web/dist"))
 
 	return logging(mux)

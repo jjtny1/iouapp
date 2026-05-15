@@ -288,13 +288,9 @@ func (s *Server) buildSummary(ctx context.Context, b bill) (map[string]any, erro
 			"id":             p.ID,
 			"display_name":   p.DisplayName,
 			"payment_status": "none",
-			"tx_ref":         nil,
 		}
 		if pay, ok := byParticipant[p.ID]; ok {
 			entry["payment_status"] = pay.Status
-			if pay.Status == "paid" && pay.TxRef.Valid {
-				entry["tx_ref"] = pay.TxRef.String
-			}
 		}
 		partsOut = append(partsOut, entry)
 	}

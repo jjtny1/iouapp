@@ -1,45 +1,66 @@
-// Package payment models settling a bill share in stablecoin.
+// Package payment builds Venmo deep links so a friend can settle their share
+// of a bill.
 //
-// The design mirrors x402 ("HTTP 402 Payment Required"): the server issues a
-// Challenge describing what to pay, the payer settles out of band and submits
-// proof, and the server Verifies that proof, recording a transaction
-// reference. A Provider abstracts the settlement backend so the mock used in
-// development can be swapped for a real on-chain provider without touching the
-// HTTP handlers.
+// Venmo gives the app no settlement callback — once a friend is handed off to
+// the Venmo app or website the app cannot observe whether the transfer
+// completed. There is therefore no verification step: the server hands the
+// friend a payment intent (the host's handle, the amount, and ready-made
+// links) and the payment is marked paid by the friend's self-report or by the
+// host confirming it.
 package payment
 
-import "context"
+import (
+	"fmt"
+	"net/url"
+	"regexp"
+	"strings"
+)
 
-// Challenge describes a payment the payer must settle. It is the body of the
-// HTTP 402 response returned when a friend initiates a payment.
-type Challenge struct {
-	PaymentID   string `json:"payment_id"`
-	AmountCents int    `json:"amount_cents"`
-	Currency    string `json:"currency"`
-	Recipient   string `json:"recipient"`
-	Network     string `json:"network"`
-}
+// handlePattern matches a valid Venmo username: 5–30 characters of letters,
+// digits, underscores and hyphens. (Venmo also accepts phone numbers and
+// emails as recipients, but the host always supplies a username here.)
+var handlePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{5,30}$`)
 
-// Provider settles and verifies payments against a backend.
-type Provider interface {
-	// Name identifies the provider; it is persisted on each payment row.
-	Name() string
-	// Verify confirms that proof settles the given Challenge and returns a
-	// transaction reference for the settled payment.
-	Verify(ctx context.Context, ch Challenge, proof string) (txRef string, err error)
-}
-
-// Network is the settlement network advertised in challenges.
-const Network = "base"
-
-// Currency is the stablecoin advertised in challenges.
-const Currency = "USDC"
-
-// NewProvider selects a Provider by name. Anything other than "x402" yields
-// the MockProvider, so development and tests settle instantly.
-func NewProvider(name string) Provider {
-	if name == "x402" {
-		return X402Provider{}
+// NormalizeHandle trims surrounding space and a leading "@" from a Venmo
+// username. ok is false when what remains is not a valid handle.
+func NormalizeHandle(raw string) (handle string, ok bool) {
+	h := strings.TrimSpace(raw)
+	h = strings.TrimPrefix(h, "@")
+	h = strings.TrimSpace(h)
+	if !handlePattern.MatchString(h) {
+		return "", false
 	}
-	return MockProvider{}
+	return h, true
+}
+
+// amountParam formats integer cents as a plain decimal string (1234 → "12.34")
+// for the Venmo "amount" query parameter.
+func amountParam(cents int) string {
+	if cents < 0 {
+		cents = 0
+	}
+	return fmt.Sprintf("%d.%02d", cents/100, cents%100)
+}
+
+// payValues builds the query parameters shared by the app and web pay links.
+func payValues(handle string, amountCents int, note string) url.Values {
+	q := url.Values{}
+	q.Set("txn", "pay")
+	q.Set("recipients", handle)
+	q.Set("amount", amountParam(amountCents))
+	q.Set("note", note)
+	return q
+}
+
+// AppURL builds a venmo:// deep link that opens the Venmo app prefilled to pay
+// handle the given amount with note. It is the link offered on phones.
+func AppURL(handle string, amountCents int, note string) string {
+	return "venmo://paycharge?" + payValues(handle, amountCents, note).Encode()
+}
+
+// WebURL builds an https://venmo.com pay link for desktop browsers and QR
+// codes. Scanned from a phone it opens the Venmo app; on a desktop browser it
+// opens Venmo's web pay flow.
+func WebURL(handle string, amountCents int, note string) string {
+	return "https://account.venmo.com/pay?" + payValues(handle, amountCents, note).Encode()
 }

@@ -3,10 +3,10 @@
 
 -- Phase 1: magic-link authentication.
 CREATE TABLE IF NOT EXISTS users (
-    id             TEXT PRIMARY KEY,
-    email          TEXT UNIQUE NOT NULL,
-    wallet_address TEXT,
-    created_at     INTEGER NOT NULL
+    id           TEXT PRIMARY KEY,
+    email        TEXT UNIQUE NOT NULL,
+    venmo_handle TEXT,
+    created_at   INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS magic_links (
@@ -70,7 +70,12 @@ CREATE TABLE IF NOT EXISTS claims (
     PRIMARY KEY (item_id, participant_id)
 );
 
--- Phase 4: mock stablecoin payments.
+-- Phase 4: Venmo payments.
+-- A payment tracks one friend settling their share. recipient is the host's
+-- Venmo handle; status is 'pending' until the friend self-reports or the host
+-- confirms it 'paid'. The provider and tx_ref columns are vestigial from the
+-- earlier USDC design — Venmo gives the app no on-chain reference — and are
+-- always written as 'venmo' / NULL respectively.
 CREATE TABLE IF NOT EXISTS payments (
     id             TEXT PRIMARY KEY,
     bill_id        TEXT NOT NULL REFERENCES bills(id),

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jjtny1/splitit/internal/config"
@@ -35,12 +36,11 @@ func newTestEnv(t *testing.T) *testEnv {
 	t.Cleanup(func() { _ = database.Close() })
 
 	cfg := config.Config{
-		Port:            "0",
-		DBPath:          dbPath,
-		BaseURL:         "http://iou.test",
-		AnthropicKey:    "",
-		DevMode:         true,
-		PaymentProvider: "mock",
+		Port:         "0",
+		DBPath:       dbPath,
+		BaseURL:      "http://iou.test",
+		AnthropicKey: "",
+		DevMode:      true,
 	}
 	srv := httptest.NewServer(NewRouter(database, cfg))
 	t.Cleanup(srv.Close)
@@ -515,7 +515,7 @@ func TestPayments(t *testing.T) {
 		map[string]any{"participant_token": partToken, "item_ids": []string{firstItemID}},
 		http.StatusOK, nil)
 
-	t.Run("pay fails with 409 when host has no wallet", func(t *testing.T) {
+	t.Run("pay fails with 409 when host has no Venmo handle", func(t *testing.T) {
 		resp, raw := e.do(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/pay",
 			bytes.NewReader(mustJSON(t, map[string]string{"participant_token": partToken})),
 			"application/json")
@@ -524,10 +524,21 @@ func TestPayments(t *testing.T) {
 		}
 	})
 
-	// Host sets a payout wallet.
-	const hostWallet = "0xHostWalletAddress"
+	t.Run("update me rejects an invalid Venmo handle", func(t *testing.T) {
+		e.doJSON(host, http.MethodPatch, "/api/users/me",
+			map[string]string{"venmo_handle": "no spaces!"}, http.StatusBadRequest, nil)
+	})
+
+	// Host sets their Venmo handle (a leading "@" is accepted and stripped).
+	const hostHandle = "host-venmo"
+	var me struct {
+		VenmoHandle string `json:"venmo_handle"`
+	}
 	e.doJSON(host, http.MethodPatch, "/api/users/me",
-		map[string]string{"wallet_address": hostWallet}, http.StatusOK, nil)
+		map[string]string{"venmo_handle": "@" + hostHandle}, http.StatusOK, &me)
+	if me.VenmoHandle != hostHandle {
+		t.Errorf("venmo_handle = %q, want %q", me.VenmoHandle, hostHandle)
+	}
 
 	// Look up the participant's expected total from the summary.
 	var summary struct {
@@ -550,48 +561,91 @@ func TestPayments(t *testing.T) {
 		t.Fatalf("participant %s not found in summary", partID)
 	}
 
-	t.Run("pay returns 402 challenge with host wallet and correct amount", func(t *testing.T) {
-		resp, raw := e.do(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/pay",
-			bytes.NewReader(mustJSON(t, map[string]string{"participant_token": partToken})),
-			"application/json")
-		if resp.StatusCode != http.StatusPaymentRequired {
-			t.Fatalf("status = %d, want 402; body=%s", resp.StatusCode, raw)
-		}
-		var ch struct {
+	var paymentID string
+	t.Run("pay returns a Venmo intent with the host handle and amount", func(t *testing.T) {
+		var intent struct {
 			PaymentID   string `json:"payment_id"`
+			Status      string `json:"status"`
 			AmountCents int    `json:"amount_cents"`
-			Recipient   string `json:"recipient"`
+			VenmoHandle string `json:"venmo_handle"`
+			AppURL      string `json:"app_url"`
+			WebURL      string `json:"web_url"`
 		}
-		if err := json.Unmarshal(raw, &ch); err != nil {
-			t.Fatalf("decode challenge: %v", err)
+		e.doJSON(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/pay",
+			map[string]string{"participant_token": partToken}, http.StatusOK, &intent)
+		if intent.VenmoHandle != hostHandle {
+			t.Errorf("venmo_handle = %q, want %q", intent.VenmoHandle, hostHandle)
 		}
-		if ch.Recipient != hostWallet {
-			t.Errorf("recipient = %q, want %q", ch.Recipient, hostWallet)
+		if intent.AmountCents != wantAmount {
+			t.Errorf("amount_cents = %d, want %d", intent.AmountCents, wantAmount)
 		}
-		if ch.AmountCents != wantAmount {
-			t.Errorf("amount_cents = %d, want %d", ch.AmountCents, wantAmount)
+		if intent.Status != "pending" {
+			t.Errorf("status = %q, want pending", intent.Status)
 		}
-		if ch.PaymentID == "" {
-			t.Error("challenge missing payment_id")
+		if intent.PaymentID == "" {
+			t.Fatal("intent missing payment_id")
 		}
+		if !strings.HasPrefix(intent.AppURL, "venmo://") {
+			t.Errorf("app_url = %q, want a venmo:// link", intent.AppURL)
+		}
+		if !strings.Contains(intent.WebURL, "venmo.com") ||
+			!strings.Contains(intent.WebURL, hostHandle) {
+			t.Errorf("web_url = %q, want a venmo.com link to the host", intent.WebURL)
+		}
+		paymentID = intent.PaymentID
+	})
 
-		// Confirm the payment; status becomes paid with a tx_ref.
+	t.Run("friend self-reports the payment paid", func(t *testing.T) {
 		var confirmed struct {
 			Status string `json:"status"`
-			TxRef  string `json:"tx_ref"`
 		}
 		e.doJSON(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/pay/confirm",
 			map[string]string{
 				"participant_token": partToken,
-				"payment_id":        ch.PaymentID,
-				"proof":             "any-proof-the-mock-ignores",
+				"payment_id":        paymentID,
 			}, http.StatusOK, &confirmed)
 		if confirmed.Status != "paid" {
 			t.Errorf("status = %q, want paid", confirmed.Status)
 		}
-		if confirmed.TxRef == "" {
-			t.Error("confirmed payment missing tx_ref")
+	})
+
+	t.Run("host can undo and re-confirm a friend's payment", func(t *testing.T) {
+		statusOf := func() string {
+			var s struct {
+				Participants []struct {
+					ID            string `json:"id"`
+					PaymentStatus string `json:"payment_status"`
+				} `json:"participants"`
+			}
+			e.doJSON(host, http.MethodGet, "/api/bills/"+billID+"/summary",
+				nil, http.StatusOK, &s)
+			for _, p := range s.Participants {
+				if p.ID == partID {
+					return p.PaymentStatus
+				}
+			}
+			t.Fatalf("participant %s not in summary", partID)
+			return ""
 		}
+
+		// Undo: the friend returns to "not paid".
+		e.doJSON(host, http.MethodPost, "/api/bills/"+billID+"/payments/"+partID,
+			map[string]bool{"paid": false}, http.StatusOK, nil)
+		if got := statusOf(); got != "none" {
+			t.Errorf("after undo, payment_status = %q, want none", got)
+		}
+
+		// Re-confirm: the host marks the friend paid again.
+		e.doJSON(host, http.MethodPost, "/api/bills/"+billID+"/payments/"+partID,
+			map[string]bool{"paid": true}, http.StatusOK, nil)
+		if got := statusOf(); got != "paid" {
+			t.Errorf("after host confirm, payment_status = %q, want paid", got)
+		}
+	})
+
+	t.Run("a non-host cannot mark a payment", func(t *testing.T) {
+		e.doJSON(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/payments/"+partID,
+			map[string]bool{"paid": false}, http.StatusUnauthorized, nil)
 	})
 }
 

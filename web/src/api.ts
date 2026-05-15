@@ -1,7 +1,7 @@
 export interface User {
   id: string;
   email: string;
-  wallet_address: string | null;
+  venmo_handle: string | null;
 }
 
 export interface BillItem {
@@ -52,15 +52,20 @@ export interface Participant {
   id: string;
   display_name: string;
   payment_status: PaymentStatus;
-  tx_ref: string | null;
 }
 
-export interface PaymentChallenge {
+// PaymentIntent is what the server hands a friend to settle in Venmo: the
+// host's handle, the amount owed, and ready-made deep links (app_url opens
+// the Venmo app; web_url opens venmo.com and is also encoded into a QR code).
+export interface PaymentIntent {
   payment_id: string;
+  status: PaymentStatus;
   amount_cents: number;
   currency: string;
-  recipient: string;
-  network: string;
+  venmo_handle: string;
+  note: string;
+  app_url: string;
+  web_url: string;
 }
 
 export interface Payment {
@@ -69,9 +74,7 @@ export interface Payment {
   amount_cents: number;
   currency: string;
   status: "pending" | "paid";
-  provider: string;
   recipient: string;
-  tx_ref: string | null;
 }
 
 export interface ParticipantShare {
@@ -125,10 +128,10 @@ export const api = {
     }),
   logout: () =>
     request<{ message: string }>("/api/auth/logout", { method: "POST" }),
-  updateWallet: (wallet_address: string) =>
+  updateVenmoHandle: (venmo_handle: string) =>
     request<User>("/api/users/me", {
       method: "PATCH",
-      body: JSON.stringify({ wallet_address }),
+      body: JSON.stringify({ venmo_handle }),
     }),
   createBill: () => request<Bill>("/api/bills", { method: "POST" }),
   listBills: () => request<Bill[]>("/api/bills"),
@@ -176,42 +179,26 @@ export const api = {
         token ? `?t=${encodeURIComponent(token)}` : ""
       }`,
     ),
-  // pay initiates a payment. The server replies with HTTP 402 carrying the
-  // challenge — that is the expected success path, not an error. A 200
-  // response means the friend has already paid.
-  pay: async (
-    id: string,
-    participant_token: string,
-  ): Promise<
-    | { kind: "challenge"; challenge: PaymentChallenge }
-    | { kind: "paid"; payment: Payment }
-  > => {
-    const res = await fetch(`/api/bills/${id}/pay`, {
+  // pay prepares a Venmo payment and returns the intent the friend needs to
+  // hand off to Venmo. If the friend has already paid, the intent comes back
+  // with status "paid".
+  pay: (id: string, participant_token: string) =>
+    request<PaymentIntent>(`/api/bills/${id}/pay`, {
       method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ participant_token }),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (res.status === 402) {
-      return { kind: "challenge", challenge: body as PaymentChallenge };
-    }
-    if (res.status === 200) {
-      return { kind: "paid", payment: body as Payment };
-    }
-    throw new Error(
-      (body as { error?: string }).error ?? "could not start payment",
-    );
-  },
-  confirmPayment: (
-    id: string,
-    participant_token: string,
-    payment_id: string,
-    proof: string,
-  ) =>
+    }),
+  // confirmPayment records the friend's self-report that they paid in Venmo.
+  confirmPayment: (id: string, participant_token: string, payment_id: string) =>
     request<Payment>(`/api/bills/${id}/pay/confirm`, {
       method: "POST",
-      body: JSON.stringify({ participant_token, payment_id, proof }),
+      body: JSON.stringify({ participant_token, payment_id }),
+    }),
+  // markPayment lets the host confirm (paid=true) or undo (paid=false) a
+  // friend's payment; it returns the refreshed bill summary.
+  markPayment: (id: string, participant_id: string, paid: boolean) =>
+    request<BillSummary>(`/api/bills/${id}/payments/${participant_id}`, {
+      method: "POST",
+      body: JSON.stringify({ paid }),
     }),
   payments: (id: string, token?: string) =>
     request<Payment[]>(
