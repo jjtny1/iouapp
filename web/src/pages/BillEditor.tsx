@@ -8,7 +8,6 @@ import { formatMoney } from "../money";
 interface DraftItem {
   name: string;
   priceDollars: string;
-  qty: number;
 }
 
 function centsToDollars(cents: number): string {
@@ -47,7 +46,6 @@ export default function BillEditor() {
       b.items.map((it) => ({
         name: it.name,
         priceDollars: centsToDollars(it.price_cents),
-        qty: it.qty,
       })),
     );
   }
@@ -101,7 +99,6 @@ export default function BillEditor() {
         items: items.map((it) => ({
           name: it.name,
           price_cents: dollarsToCents(it.priceDollars),
-          qty: it.qty,
         })),
       });
       loadFromBill(updated);
@@ -119,7 +116,7 @@ export default function BillEditor() {
   }
 
   function addItem() {
-    setItems((prev) => [...prev, { name: "", priceDollars: "0.00", qty: 1 }]);
+    setItems((prev) => [...prev, { name: "", priceDollars: "0.00" }]);
   }
 
   function removeItem(index: number) {
@@ -157,7 +154,7 @@ export default function BillEditor() {
   }
 
   const subtotalCents = items.reduce(
-    (sum, it) => sum + dollarsToCents(it.priceDollars) * it.qty,
+    (sum, it) => sum + dollarsToCents(it.priceDollars),
     0,
   );
   const totalCents =
@@ -234,16 +231,6 @@ export default function BillEditor() {
                 value={it.priceDollars}
                 onChange={(e) =>
                   updateItem(i, { priceDollars: e.target.value })
-                }
-              />
-              <input
-                type="number"
-                min="1"
-                value={it.qty}
-                onChange={(e) =>
-                  updateItem(i, {
-                    qty: Math.max(1, parseInt(e.target.value, 10) || 1),
-                  })
                 }
               />
               <button className="link-button" onClick={() => removeItem(i)}>

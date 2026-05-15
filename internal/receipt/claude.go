@@ -21,8 +21,9 @@ const (
 )
 
 const parsePrompt = `Extract the restaurant bill from this receipt image. ` +
-	`Identify the restaurant name, every line item with its name, price, and quantity, ` +
-	`the tax, and the tip. Also identify the currency as a 3-letter ISO 4217 code ` +
+	`Identify the restaurant name, every line item with its name, per-unit price, and quantity, ` +
+	`the tax, and the tip. The price is the price of a single unit, not the line total. ` +
+	`Also identify the currency as a 3-letter ISO 4217 code ` +
 	`(e.g. USD, EUR, PLN, JPY) inferred from currency symbols or text on the receipt; ` +
 	`if you cannot tell, use "USD". ` +
 	`Express all monetary amounts as integer cents — hundredths of the currency's ` +

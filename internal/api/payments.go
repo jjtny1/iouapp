@@ -77,7 +77,7 @@ func (s *Server) amountOwed(ctx context.Context, b bill, participantID string) (
 	for _, it := range items {
 		splitItems = append(splitItems, split.Item{
 			ID:         it.ID,
-			TotalCents: it.PriceCents * it.Qty,
+			TotalCents: it.PriceCents,
 		})
 	}
 	summary := split.Compute(splitItems, b.TaxCents, b.TipCents, claims)

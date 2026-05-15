@@ -4,7 +4,7 @@ package split
 
 import "sort"
 
-// Item is a bill line item; TotalCents is price_cents * qty.
+// Item is a single claimable bill item; TotalCents is its full price.
 type Item struct {
 	ID         string
 	TotalCents int

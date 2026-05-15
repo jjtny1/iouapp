@@ -261,7 +261,7 @@ func TestFriendFlowAndSummaryInvariant(t *testing.T) {
 	for _, it := range itemsRaw {
 		m := it.(map[string]any)
 		itemIDs = append(itemIDs, m["id"].(string))
-		itemTotal += int(m["price_cents"].(float64)) * int(m["qty"].(float64))
+		itemTotal += int(m["price_cents"].(float64))
 	}
 	taxCents := int(friendBill["tax_cents"].(float64))
 	tipCents := int(friendBill["tip_cents"].(float64))

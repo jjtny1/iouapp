@@ -37,12 +37,13 @@ CREATE TABLE IF NOT EXISTS bills (
     created_at   INTEGER NOT NULL
 );
 
+-- Each row is one claimable unit; multi-quantity receipt lines are expanded
+-- into separate rows at parse time so each unit can be claimed individually.
 CREATE TABLE IF NOT EXISTS items (
     id          TEXT PRIMARY KEY,
     bill_id     TEXT NOT NULL REFERENCES bills(id),
     name        TEXT NOT NULL,
     price_cents INTEGER NOT NULL,
-    qty         INTEGER NOT NULL DEFAULT 1,
     position    INTEGER NOT NULL DEFAULT 0
 );
 

@@ -225,7 +225,7 @@ export default function FriendSplit() {
         {summary.items.map((it) => {
           const claimers = summary.claims[it.id] ?? [];
           const mineClaimed = myId ? claimers.includes(myId) : false;
-          const total = it.price_cents * it.qty;
+          const total = it.price_cents;
           return (
             <li key={it.id}>
               <label className="claim-row">
@@ -234,10 +234,7 @@ export default function FriendSplit() {
                   checked={mineClaimed}
                   onChange={() => toggleItem(it.id)}
                 />
-                <span className="claim-name">
-                  {it.name || "Item"}
-                  {it.qty > 1 ? ` ×${it.qty}` : ""}
-                </span>
+                <span className="claim-name">{it.name || "Item"}</span>
                 <span className="claim-price">
                   {fmt(total)}
                   {claimers.length > 0 && (

@@ -253,7 +253,7 @@ func (s *Server) buildSummary(ctx context.Context, b bill) (map[string]any, erro
 	for _, it := range items {
 		splitItems = append(splitItems, split.Item{
 			ID:         it.ID,
-			TotalCents: it.PriceCents * it.Qty,
+			TotalCents: it.PriceCents,
 		})
 	}
 	summary := split.Compute(splitItems, b.TaxCents, b.TipCents, claims)
