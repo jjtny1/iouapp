@@ -7,24 +7,30 @@ import (
 	"time"
 
 	"github.com/jjtny1/splitit/internal/auth"
+	"github.com/jjtny1/splitit/internal/autosplit"
 	"github.com/jjtny1/splitit/internal/config"
 	"github.com/jjtny1/splitit/internal/db"
 	"github.com/jjtny1/splitit/internal/receipt"
+	"github.com/jjtny1/splitit/internal/transcribe"
 )
 
 type Server struct {
-	DB     *db.DB
-	Cfg    config.Config
-	Mailer auth.EmailSender
-	Parser receipt.Parser
+	DB          *db.DB
+	Cfg         config.Config
+	Mailer      auth.EmailSender
+	Parser      receipt.Parser
+	Transcriber transcribe.Transcriber
+	Assigner    autosplit.Assigner
 }
 
 func NewRouter(database *db.DB, cfg config.Config, mailer auth.EmailSender) http.Handler {
 	s := &Server{
-		DB:     database,
-		Cfg:    cfg,
-		Mailer: mailer,
-		Parser: receipt.New(cfg),
+		DB:          database,
+		Cfg:         cfg,
+		Mailer:      mailer,
+		Parser:      receipt.New(cfg),
+		Transcriber: transcribe.New(cfg),
+		Assigner:    autosplit.New(cfg),
 	}
 
 	mux := http.NewServeMux()
@@ -38,6 +44,7 @@ func NewRouter(database *db.DB, cfg config.Config, mailer auth.EmailSender) http
 	mux.HandleFunc("GET /api/bills", s.requireAuth(s.handleListBills))
 	mux.HandleFunc("GET /api/bills/{id}", s.handleGetBill)
 	mux.HandleFunc("POST /api/bills/{id}/receipt", s.requireAuth(s.handleBillReceipt))
+	mux.HandleFunc("POST /api/bills/{id}/audio-split", s.requireAuth(s.handleAudioSplit))
 	mux.HandleFunc("PATCH /api/bills/{id}", s.requireAuth(s.handleUpdateBill))
 	mux.HandleFunc("DELETE /api/bills/{id}", s.requireAuth(s.handleDeleteBill))
 	mux.HandleFunc("GET /api/by-token/{token}", s.handleBillByToken)

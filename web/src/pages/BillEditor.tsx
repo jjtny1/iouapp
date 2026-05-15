@@ -124,6 +124,60 @@ function ParsingView() {
   );
 }
 
+/* ── Audio-split animation — shown while the audio split is in flight ── */
+function AudioSplitView() {
+  const [step, setStep] = useState(0);
+  const messages = ["Listening", "Matching people", "Splitting up"];
+  useEffect(() => {
+    const t = setInterval(
+      () => setStep((s) => (s + 1) % messages.length),
+      1100,
+    );
+    return () => clearInterval(t);
+  }, [messages.length]);
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+        padding: "32px 18px",
+      }}
+    >
+      <div className="dropzone-orb" style={{ marginBottom: 6 }}>
+        <Icon.Mic size={26} />
+      </div>
+      <div
+        className="row gap-1"
+        style={{ alignItems: "flex-end", height: 26, marginTop: 4 }}
+      >
+        {[0, 1, 2, 3, 4].map((i) => (
+          <span
+            key={i}
+            className="shimmer"
+            style={{
+              width: 5,
+              height: 8 + ((i * 7) % 16),
+              borderRadius: 3,
+              animationDelay: `${i * 0.18}s`,
+            }}
+          />
+        ))}
+      </div>
+      <p
+        className="mono"
+        style={{ margin: "20px 0 0", fontSize: 12, letterSpacing: "0.04em" }}
+      >
+        {messages[step]}
+        <span style={{ opacity: 0.5 }}>…</span>
+      </p>
+    </div>
+  );
+}
+
 export default function BillEditor() {
   const { id } = useParams<{ id: string }>();
   const { user, setUser } = useAuth();
@@ -151,6 +205,22 @@ export default function BillEditor() {
   const [summary, setSummary] = useState<BillSummary | null>(null);
   const [venmoHandle, setVenmoHandle] = useState(user?.venmo_handle ?? "");
   const [savingHandle, setSavingHandle] = useState(false);
+
+  /* ── Audio split ─────────────────────────────────────────────────── */
+  const audioFileRef = useRef<HTMLInputElement>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<BlobPart[]>([]);
+  const [hostName, setHostName] = useState(
+    () => user?.email?.split("@")[0] ?? "",
+  );
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [splitting, setSplitting] = useState(false);
+  const [audioResult, setAudioResult] = useState<{
+    transcript: string;
+    notes: string;
+  } | null>(null);
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
 
   function loadFromBill(b: Bill) {
     setBill(b);
@@ -319,6 +389,73 @@ export default function BillEditor() {
     }
   }
 
+  /* ── Audio split: record, upload, submit ─────────────────────────── */
+  // startRecording opens the mic and collects chunks; stopRecording assembles
+  // them into a File ready to hand to api.audioSplit.
+  async function startRecording() {
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      chunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      recorder.onstop = () => {
+        const type = recorder.mimeType || "audio/webm";
+        const blob = new Blob(chunksRef.current, { type });
+        const ext = type.includes("ogg")
+          ? "ogg"
+          : type.includes("mp4")
+            ? "mp4"
+            : "webm";
+        setAudioFile(new File([blob], `split-recording.${ext}`, { type }));
+        stream.getTracks().forEach((t) => t.stop());
+        recorderRef.current = null;
+      };
+      recorderRef.current = recorder;
+      recorder.start();
+      setRecording(true);
+    } catch {
+      setError("Couldn't access the microphone — upload a file instead.");
+    }
+  }
+
+  function stopRecording() {
+    recorderRef.current?.stop();
+    setRecording(false);
+  }
+
+  function onAudioUpload(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) setAudioFile(file);
+  }
+
+  // submitAudioSplit hands the clip to the server, which transcribes it and
+  // assigns items to people, then refreshes the summary so the Joined
+  // section renders the per-person breakdown.
+  async function submitAudioSplit() {
+    if (!id || !audioFile) return;
+    const trimmed = hostName.trim();
+    if (!trimmed) {
+      setError("Add your name so we know which share is yours.");
+      return;
+    }
+    setError(null);
+    setSplitting(true);
+    try {
+      const res = await api.audioSplit(id, audioFile, trimmed);
+      setAudioResult({ transcript: res.transcript, notes: res.notes });
+      setSummary(res);
+      setBill((b) => (b ? { ...b, split_mode: "host" } : b));
+      showToast("Split it out loud");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "audio split failed");
+    } finally {
+      setSplitting(false);
+    }
+  }
+
   /* ── Loading / not-found ─────────────────────────────────────────── */
   if (loading) {
     return (
@@ -352,6 +489,26 @@ export default function BillEditor() {
     return (
       <PaperApp>
         <ParsingView />
+      </PaperApp>
+    );
+  }
+
+  /* ── Audio split in flight ───────────────────────────────────────── */
+  if (splitting) {
+    return (
+      <PaperApp>
+        <div
+          className="page"
+          style={{
+            minHeight: 460,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+          }}
+        >
+          <p className="eyebrow center">Splitting it out loud</p>
+          <AudioSplitView />
+        </div>
       </PaperApp>
     );
   }
@@ -671,6 +828,183 @@ export default function BillEditor() {
         >
           {saving ? "Saving…" : "Save tab"}
         </button>
+
+        {/* Split it out loud — host records/uploads audio describing who had
+            what; the server transcribes it and assigns items to named people.
+            Relies on saved server-side item IDs, so it only shows once the
+            bill has been saved at least once. */}
+        {bill.items.length > 0 && (
+          <div className="card mt-8">
+            <div className="row row-between">
+              <span className="eyebrow">Split it out loud</span>
+              <span className="eyebrow muted">
+                {bill.split_mode === "host" ? "done ✓" : "optional"}
+              </span>
+            </div>
+            <p className="body muted mt-2" style={{ fontSize: 12 }}>
+              Record or upload a clip describing who ordered what — "Maya had
+              the salad, Theo and I split the pizza" — and we'll do the split
+              for you. Friends just pick their name and pay.
+            </p>
+            <p className="body muted mt-2" style={{ fontSize: 11 }}>
+              Edit the items after splitting and you'll need to run this again.
+            </p>
+
+            <div className="col gap-1 mt-3">
+              <label className="eyebrow">Your name</label>
+              <input
+                className="input"
+                type="text"
+                placeholder="e.g. Maya"
+                value={hostName}
+                onChange={(e) => setHostName(e.target.value)}
+              />
+            </div>
+
+            <input
+              ref={audioFileRef}
+              type="file"
+              accept="audio/*"
+              onChange={onAudioUpload}
+              style={{ display: "none" }}
+            />
+
+            <div
+              className="dropzone mt-3"
+              style={{ height: "auto", padding: "20px 16px", gap: 8 }}
+            >
+              <div className="dropzone-orb">
+                <Icon.Mic size={26} />
+              </div>
+              {recording ? (
+                <>
+                  <p
+                    className="row gap-1"
+                    style={{
+                      margin: 0,
+                      fontSize: 14,
+                      fontWeight: 500,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 9,
+                        height: 9,
+                        borderRadius: "50%",
+                        background: "#c0392b",
+                        display: "inline-block",
+                      }}
+                    />{" "}
+                    Recording…
+                  </p>
+                  <button
+                    className="btn btn-block mt-2"
+                    onClick={stopRecording}
+                  >
+                    Stop recording
+                  </button>
+                </>
+              ) : audioFile ? (
+                <>
+                  <p
+                    className="mono truncate"
+                    style={{ margin: 0, fontSize: 12, maxWidth: "100%" }}
+                  >
+                    {audioFile.name}
+                  </p>
+                  <p className="body muted" style={{ fontSize: 11, margin: 0 }}>
+                    Clip ready to split.
+                  </p>
+                  <div className="row gap-2 mt-2" style={{ width: "100%" }}>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ flex: 1 }}
+                      onClick={() => setAudioFile(null)}
+                    >
+                      Clear
+                    </button>
+                    <button
+                      className="btn btn-accent btn-sm"
+                      style={{ flex: 1 }}
+                      onClick={submitAudioSplit}
+                    >
+                      Split the bill <Icon.Arrow size={12} />
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p style={{ margin: 0, fontSize: 14, fontWeight: 500 }}>
+                    Record a clip
+                  </p>
+                  <p className="body muted" style={{ fontSize: 12, margin: 0 }}>
+                    or upload an audio file
+                  </p>
+                  <div className="row gap-2 mt-2" style={{ width: "100%" }}>
+                    <button
+                      className="btn btn-sm"
+                      style={{ flex: 1 }}
+                      onClick={startRecording}
+                    >
+                      <Icon.Mic size={13} /> Record
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ flex: 1 }}
+                      onClick={() => audioFileRef.current?.click()}
+                    >
+                      Upload file
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {audioResult && (
+              <div className="mt-4">
+                <button
+                  className="link-btn"
+                  onClick={() => setTranscriptOpen((o) => !o)}
+                >
+                  <Icon.ChevronDown
+                    size={12}
+                    style={{
+                      transform: transcriptOpen ? "none" : "rotate(-90deg)",
+                      transition: "transform .15s",
+                    }}
+                  />{" "}
+                  {transcriptOpen ? "Hide transcript" : "Show transcript"}
+                </button>
+                {transcriptOpen && (
+                  <p
+                    className="body muted mt-2"
+                    style={{
+                      fontSize: 12,
+                      fontStyle: "italic",
+                      background: "var(--paper)",
+                      border: "1px dashed var(--line-dashed)",
+                      borderRadius: 10,
+                      padding: "10px 12px",
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    {audioResult.transcript || "(no speech detected)"}
+                  </p>
+                )}
+                {audioResult.notes && (
+                  <p
+                    className="body mt-2"
+                    style={{ fontSize: 12, color: "var(--ink)" }}
+                  >
+                    {audioResult.notes}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Venmo handle — friends pay their share straight to it */}
         <div className="card mt-8">

@@ -16,6 +16,11 @@ export interface BillItem {
 // across the diner headcount, "none" means there is no service charge.
 export type ServiceChargeKind = "none" | "percent" | "fixed";
 
+// split_mode is how a bill is divvied up: "claim" is the default — friends
+// open the share link and self-claim items; "host" means the host already
+// split it (via the audio-split flow) and friends only pick their name + pay.
+export type SplitMode = "claim" | "host";
+
 export interface Bill {
   id: string;
   restaurant: string;
@@ -26,6 +31,7 @@ export interface Bill {
   service_charge_rate_bps: number;
   service_charge_cents: number;
   service_charge_headcount: number;
+  split_mode: SplitMode;
   status: string;
   items: BillItem[];
   created_at: number;
@@ -52,6 +58,13 @@ export interface Participant {
   id: string;
   display_name: string;
   payment_status: PaymentStatus;
+  // host_managed marks a participant the host created via the audio split
+  // (rather than someone who joined themselves). is_host flags the host's own
+  // participant row. participant_token is the per-participant token a friend
+  // uses to pay — present only on participants of a split_mode === "host" bill.
+  host_managed?: boolean;
+  is_host?: boolean;
+  participant_token?: string;
 }
 
 // PaymentIntent is what the server hands a friend to settle in Venmo: the
@@ -99,6 +112,14 @@ export interface BillSummary {
   participants: Participant[];
   claims: Record<string, string[]>;
   split: SplitResult;
+}
+
+// AudioSplitResult is what POST /audio-split returns: a full bill summary
+// (with the host-created participants + claims) plus the Whisper transcript
+// and Claude's notes about how it assigned items.
+export interface AudioSplitResult extends BillSummary {
+  transcript: string;
+  notes: string;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -152,6 +173,31 @@ export const api = {
       throw new Error((body as { error?: string }).error ?? "upload failed");
     }
     return body as Bill;
+  },
+  // audioSplit uploads a host's audio clip describing how the bill splits.
+  // The server transcribes it and uses Claude to assign items to named
+  // people, creating participants + claims, and flips the bill to "host"
+  // split mode. Multipart, like uploadReceipt — no Content-Type header.
+  audioSplit: async (
+    id: string,
+    audio: File,
+    hostName: string,
+  ): Promise<AudioSplitResult> => {
+    const form = new FormData();
+    form.append("audio", audio);
+    form.append("host_name", hostName);
+    const res = await fetch(`/api/bills/${id}/audio-split`, {
+      method: "POST",
+      credentials: "same-origin",
+      body: form,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(
+        (body as { error?: string }).error ?? "audio split failed",
+      );
+    }
+    return body as AudioSplitResult;
   },
   updateBill: (id: string, update: BillUpdate) =>
     request<Bill>(`/api/bills/${id}`, {

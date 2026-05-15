@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS bills (
     service_charge_cents     INTEGER NOT NULL DEFAULT 0,
     service_charge_headcount INTEGER NOT NULL DEFAULT 0,
     status                   TEXT NOT NULL DEFAULT 'draft',
+    split_mode               TEXT NOT NULL DEFAULT 'claim',
+    audio_transcript         TEXT,
     friend_token             TEXT NOT NULL UNIQUE,
     created_at               INTEGER NOT NULL
 );
@@ -61,6 +63,8 @@ CREATE TABLE IF NOT EXISTS participants (
     bill_id           TEXT NOT NULL REFERENCES bills(id),
     display_name      TEXT NOT NULL,
     participant_token TEXT NOT NULL UNIQUE,
+    host_managed      INTEGER NOT NULL DEFAULT 0,
+    is_host           INTEGER NOT NULL DEFAULT 0,
     created_at        INTEGER NOT NULL
 );
 

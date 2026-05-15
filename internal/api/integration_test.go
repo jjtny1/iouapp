@@ -734,6 +734,106 @@ func TestDeleteBill(t *testing.T) {
 	})
 }
 
+func TestAudioSplit(t *testing.T) {
+	e := newTestEnv(t)
+	host := e.signIn("host@example.com")
+
+	bill := e.createBill(host)
+	billID := bill["id"].(string)
+	friendToken := bill["friend_token"].(string)
+
+	// Give the bill items via the receipt upload path (StubParser).
+	e.uploadReceipt(host, billID, http.StatusOK, nil)
+
+	// Post a small multipart audio body. With no API keys configured the
+	// StubTranscriber + StubAssigner run, so the bytes themselves are ignored.
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("audio", "clip.m4a")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := fw.Write([]byte("dummy-audio-bytes-the-stub-ignores")); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := mw.WriteField("host_name", "Sam"); err != nil {
+		t.Fatalf("write host_name field: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	resp, raw := e.do(host, http.MethodPost,
+		"/api/bills/"+billID+"/audio-split", &buf, mw.FormDataContentType())
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("audio split: status = %d, want 200; body=%s", resp.StatusCode, raw)
+	}
+
+	var out struct {
+		Transcript   string `json:"transcript"`
+		Participants []struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+			IsHost      bool   `json:"is_host"`
+			HostManaged bool   `json:"host_managed"`
+		} `json:"participants"`
+		Split struct {
+			Participants []struct {
+				ParticipantID string `json:"participant_id"`
+				TotalCents    int    `json:"total_cents"`
+			} `json:"participants"`
+		} `json:"split"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode audio split response: %v; body=%s", err, raw)
+	}
+
+	if out.Transcript == "" {
+		t.Error("audio split response should include a transcript")
+	}
+	if len(out.Participants) == 0 {
+		t.Fatal("audio split should create participants")
+	}
+	hostCount := 0
+	for _, p := range out.Participants {
+		if !p.HostManaged {
+			t.Errorf("participant %s should be host_managed", p.DisplayName)
+		}
+		if p.IsHost {
+			hostCount++
+		}
+	}
+	if hostCount != 1 {
+		t.Errorf("expected exactly one is_host participant, got %d", hostCount)
+	}
+
+	// At least one split participant must owe a non-zero amount.
+	nonZero := false
+	for _, p := range out.Split.Participants {
+		if p.TotalCents > 0 {
+			nonZero = true
+		}
+	}
+	if !nonZero {
+		t.Error("expected at least one participant with a non-zero total")
+	}
+
+	// Joining a host-split bill is rejected.
+	resp2, raw2 := e.do(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/participants",
+		bytes.NewReader(mustJSON(t, map[string]string{"display_name": "Latecomer", "t": friendToken})),
+		"application/json")
+	if resp2.StatusCode != http.StatusBadRequest {
+		t.Errorf("join host-split bill: status = %d, want 400; body=%s", resp2.StatusCode, raw2)
+	}
+
+	// The bill now reports split_mode "host".
+	var detail map[string]any
+	e.doJSON(host, http.MethodGet, "/api/bills/"+billID, nil, http.StatusOK, &detail)
+	if detail["split_mode"] != "host" {
+		t.Errorf("split_mode = %v, want host", detail["split_mode"])
+	}
+}
+
 // mustJSON marshals v or fails the test.
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()

@@ -25,6 +25,14 @@ var migrations = []string{
 	// identity. The legacy wallet_address column is left in place on existing
 	// databases — nothing reads it — so no drop migration is needed.
 	`ALTER TABLE users ADD COLUMN venmo_handle TEXT`,
+	// Host audio-split: split_mode is 'claim' (friends self-claim) or 'host'
+	// (the host's audio recording was transcribed and AI-assigned). When the
+	// host splits by audio the transcript is kept on the bill, and the
+	// participants it creates are flagged host_managed (one is the host).
+	`ALTER TABLE bills ADD COLUMN split_mode TEXT NOT NULL DEFAULT 'claim'`,
+	`ALTER TABLE bills ADD COLUMN audio_transcript TEXT`,
+	`ALTER TABLE participants ADD COLUMN host_managed INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE participants ADD COLUMN is_host INTEGER NOT NULL DEFAULT 0`,
 }
 
 type DB struct {

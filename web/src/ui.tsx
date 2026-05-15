@@ -166,6 +166,37 @@ export const Icon = {
       <path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" />
     </svg>
   ),
+  Mic: ({ size = 22, ...p }: IconProps) => (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...p}
+    >
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+    </svg>
+  ),
+  ChevronDown: ({ size = 14, ...p }: IconProps) => (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...p}
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  ),
   Wallet: ({ size = 16, ...p }: IconProps) => (
     <svg
       viewBox="0 0 24 24"
