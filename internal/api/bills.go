@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +15,16 @@ import (
 )
 
 const maxReceiptBytes = 10 << 20
+
+// supportedReceiptTypes are the image media types the receipt parser (the
+// Anthropic vision API) can read. HEIC is intentionally absent: iPhone HEIC
+// photos are converted to JPEG client-side before upload.
+var supportedReceiptTypes = map[string]bool{
+	"image/jpeg": true,
+	"image/png":  true,
+	"image/gif":  true,
+	"image/webp": true,
+}
 
 type billItem struct {
 	ID         string `json:"id"`
@@ -197,8 +208,15 @@ func (s *Server) handleBillReceipt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mediaType := header.Header.Get("Content-Type")
-	if mediaType == "" {
+	if mediaType == "" || mediaType == "application/octet-stream" {
 		mediaType = http.DetectContentType(image)
+	}
+	base, _, _ := strings.Cut(mediaType, ";")
+	if !supportedReceiptTypes[strings.TrimSpace(base)] {
+		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{
+			"error": "unsupported image type; upload a JPEG, PNG, GIF, or WebP",
+		})
+		return
 	}
 
 	parsed, err := s.Parser.Parse(r.Context(), image, mediaType)

@@ -142,7 +142,9 @@ func (e *testEnv) uploadReceipt(client *http.Client, billID string, wantStatus i
 	if err != nil {
 		e.t.Fatalf("create form file: %v", err)
 	}
-	if _, err := fw.Write([]byte("dummy-image-bytes-the-stub-ignores")); err != nil {
+	// A JPEG SOI marker so the server's media-type check accepts the upload;
+	// the stub parser ignores the bytes themselves.
+	if _, err := fw.Write([]byte("\xff\xd8\xff\xe0dummy-image-bytes-the-stub-ignores")); err != nil {
 		e.t.Fatalf("write form file: %v", err)
 	}
 	if err := mw.Close(); err != nil {

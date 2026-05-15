@@ -30,6 +30,12 @@
   color: #444;
 }
 
+.bill-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
 .app input {
   padding: 0.5rem;
   font: inherit;
