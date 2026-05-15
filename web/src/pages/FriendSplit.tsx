@@ -9,11 +9,11 @@ import {
 import { formatMoney } from "../money";
 
 function tokenKey(billId: string): string {
-  return `splitit:participant:${billId}`;
+  return `iou:participant:${billId}`;
 }
 
 function idKey(billId: string): string {
-  return `splitit:participant-id:${billId}`;
+  return `iou:participant-id:${billId}`;
 }
 
 export default function FriendSplit() {
@@ -151,7 +151,7 @@ export default function FriendSplit() {
   if (loading) {
     return (
       <main className="app">
-        <h1>splitit</h1>
+        <h1>IOU</h1>
         <p>Loading…</p>
       </main>
     );
@@ -160,7 +160,7 @@ export default function FriendSplit() {
   if (!bill) {
     return (
       <main className="app">
-        <h1>splitit</h1>
+        <h1>IOU</h1>
         <p className="error">{error ?? "Bill not found."}</p>
       </main>
     );
@@ -169,7 +169,7 @@ export default function FriendSplit() {
   if (!participantToken) {
     return (
       <main className="app">
-        <h1>splitit</h1>
+        <h1>IOU</h1>
         <h2>{bill.restaurant || "Split the bill"}</h2>
         <p className="status">Enter your name to claim your items.</p>
         {error && <p className="error">{error}</p>}
@@ -193,7 +193,7 @@ export default function FriendSplit() {
   if (!summary) {
     return (
       <main className="app">
-        <h1>splitit</h1>
+        <h1>IOU</h1>
         <p>Loading items…</p>
         {error && <p className="error">{error}</p>}
       </main>
@@ -219,7 +219,7 @@ export default function FriendSplit() {
 
   return (
     <main className="app">
-      <h1>splitit</h1>
+      <h1>IOU</h1>
       <h2>{bill.restaurant || "Split the bill"}</h2>
       <p className="status">
         Tap the items you ordered. Shared items split evenly.

@@ -15,7 +15,7 @@
 
 ## Project
 
-**What**: splitit — split a restaurant bill with friends. The host uploads a
+**What**: IOU — split a restaurant bill with friends. The host uploads a
 receipt photo, it's parsed into line items/tax/tip, friends open a share link
 and claim what they ordered, and each settles their prorated share.
 
@@ -27,7 +27,7 @@ Packages: `internal/{api,auth,db,config,receipt,payment,split}`.
 
 | Command                                           | Description                      |
 | ------------------------------------------------- | -------------------------------- |
-| `SPLITIT_DEV=1 go run ./cmd/server`               | Start API on :8080 (dev mode)    |
+| `IOU_DEV=1 go run ./cmd/server`                   | Start API on :8080 (dev mode)    |
 | `cd web && npm run dev`                           | Start Vite dev server on :5173   |
 | `go test ./...`                                   | Run Go tests                     |
 | `cd web && npm run build`                         | Build the frontend to `web/dist` |
@@ -48,13 +48,13 @@ and exits (don't `kill` the squatter, it's another agent — just pick another
 port):
 
 ```bash
-SPLITIT_DEV=1 PORT=8231 SPLITIT_BASE_URL=http://localhost:8231 \
-  SPLITIT_DB=/tmp/splitit-test.db ANTHROPIC_API_KEY=sk-ant-... \
+IOU_DEV=1 PORT=8231 IOU_BASE_URL=http://localhost:8231 \
+  IOU_DB=/tmp/iou-test.db ANTHROPIC_API_KEY=sk-ant-... \
   go run ./cmd/server
 ```
 
 - **Magic-link sign-in via API.** `POST /api/auth/request {"email":...}` returns
-  the dev link in its JSON (`SPLITIT_DEV=1`). Extract the `token` from it and
+  the dev link in its JSON (`IOU_DEV=1`). Extract the `token` from it and
   `POST /api/auth/verify {"token":...}` with a curl cookie jar (`-c`/`-b`) to
   get a session. The browser SignIn page shows the same dev link on screen.
 - **Receipt upload can't be driven through the browser.** The Chrome extension
@@ -96,6 +96,16 @@ SPLITIT_DEV=1 PORT=8231 SPLITIT_BASE_URL=http://localhost:8231 \
   Node 20, prefix commands with
   `export NVM_DIR="$HOME/.nvm"; source "$NVM_DIR/nvm.sh"; nvm use 20 >/dev/null 2>&1;`
 - **Don't commit straight to `main`.** Branch first, then open a PR.
+- **Don't rename the Go module path while other worktree branches are in
+  flight.** Renaming `module` in `go.mod` rewrites every
+  `import "github.com/jjtny1/splitit/..."` line repo-wide — it's all-or-nothing.
+  Worktrees are isolated on disk so it won't break a sibling branch's build
+  immediately, but at merge time it conflicts with every Go file another branch
+  touched, and once it lands on `main` any branch still on the old path stops
+  compiling. Do module-path renames as a standalone change when the repo is
+  quiet (no other open branches). Note the module path is a _logical_
+  identifier — it need not match the on-disk directory or the GitHub repo name,
+  so there's no functional pressure to rename it at all.
 - **Don't give items a `qty` field.** One `items` row is exactly one claimable
   unit; `price_cents` is that unit's full price. Multi-quantity receipt lines
   are expanded at parse time (see below), so nothing downstream multiplies by a
@@ -156,7 +166,7 @@ count)` shares — shares beyond the joined participants go to `unclaimed` so
   each friend claim their own unit (e.g. two people each pick one of two
   Cokes) instead of sharing a single multi-quantity checkbox. The `items`
   table has no `qty` column.
-- **Auth is magic-link.** In `SPLITIT_DEV=1` the link is returned in the JSON
+- **Auth is magic-link.** In `IOU_DEV=1` the link is returned in the JSON
   response; otherwise it's only logged server-side (no email delivery yet).
 - **The verify page can race the auth bootstrap.** `AuthProvider`'s initial
   `GET /api/auth/me` (run unauthenticated on first paint) can resolve _after_

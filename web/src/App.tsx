@@ -12,7 +12,7 @@ function ProtectedHome() {
   if (loading) {
     return (
       <main className="app">
-        <h1>splitit</h1>
+        <h1>IOU</h1>
         <p>Loading…</p>
       </main>
     );
@@ -25,7 +25,7 @@ function ProtectedBillEditor() {
   if (loading) {
     return (
       <main className="app">
-        <h1>splitit</h1>
+        <h1>IOU</h1>
         <p>Loading…</p>
       </main>
     );

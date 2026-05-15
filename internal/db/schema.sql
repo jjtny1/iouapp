@@ -1,4 +1,4 @@
--- splitit schema.
+-- IOU schema.
 -- Applied idempotently on startup; tables are added per build phase.
 
 -- Phase 1: magic-link authentication.
