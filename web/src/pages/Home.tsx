@@ -2,10 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type Bill } from "../api";
 import { useAuth } from "../auth";
-
-function dollars(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
-}
+import { formatMoney } from "../money";
 
 export default function Home() {
   const { user, setUser } = useAuth();
@@ -77,10 +74,11 @@ export default function Home() {
               <Link to={`/bills/${b.id}`}>
                 {b.restaurant || "Untitled bill"} — {b.status}
                 {" · "}
-                {dollars(
+                {formatMoney(
                   b.items.reduce((s, it) => s + it.price_cents, 0) +
                     b.tax_cents +
                     b.tip_cents,
+                  b.currency,
                 )}
               </Link>
             </li>

@@ -184,6 +184,11 @@ func (s *Server) handlePay(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().Unix()
 	var p paymentRow
 	if !hasExisting {
+		// The payment settles in the stablecoin advertised by payment.Currency
+		// (USDC). When the bill's own currency is not USD, amount is still its
+		// raw owed value — FX conversion from the bill currency to the
+		// settlement currency is intentionally deferred to the planned x402
+		// work and is not applied here.
 		p = paymentRow{
 			ID:            uuid.NewString(),
 			BillID:        b.ID,

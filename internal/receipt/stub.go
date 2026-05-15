@@ -9,6 +9,7 @@ type StubParser struct{}
 func (StubParser) Parse(_ context.Context, _ []byte, _ string) (ParsedReceipt, error) {
 	return ParsedReceipt{
 		Restaurant: "Sample Diner",
+		Currency:   "USD",
 		Items: []ParsedItem{
 			{Name: "Cheeseburger", PriceCents: 1395, Qty: 2},
 			{Name: "Caesar Salad", PriceCents: 1050, Qty: 1},
