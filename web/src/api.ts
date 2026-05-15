@@ -27,6 +27,7 @@ export interface Bill {
 
 export interface BillUpdate {
   restaurant: string;
+  currency: string;
   tax_cents: number;
   tip_cents: number;
   status?: string;

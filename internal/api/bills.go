@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jjtny1/splitit/internal/auth"
+	"github.com/jjtny1/splitit/internal/money"
 )
 
 const maxReceiptBytes = 10 << 20
@@ -240,6 +241,7 @@ func (s *Server) handleBillReceipt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	b.Restaurant = parsed.Restaurant
+	b.Currency = money.CurrencyOrDefault(parsed.Currency)
 	b.TaxCents = parsed.TaxCents
 	if b.TaxCents < 0 {
 		b.TaxCents = 0
@@ -279,6 +281,7 @@ func (s *Server) handleUpdateBill(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Restaurant string `json:"restaurant"`
+		Currency   string `json:"currency"`
 		TaxCents   int    `json:"tax_cents"`
 		TipCents   int    `json:"tip_cents"`
 		Status     string `json:"status"`
@@ -298,6 +301,18 @@ func (s *Server) handleUpdateBill(w http.ResponseWriter, r *http.Request) {
 	if req.Status != "" && req.Status != "draft" && req.Status != "open" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid status"})
 		return
+	}
+	// Currency is optional in the request; when present it must be a valid
+	// ISO 4217 code, otherwise the bill keeps its existing currency.
+	if req.Currency != "" {
+		c, ok := money.NormalizeCurrency(req.Currency)
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "currency must be a 3-letter ISO 4217 code",
+			})
+			return
+		}
+		b.Currency = c
 	}
 
 	items := make([]billItem, 0, len(req.Items))
@@ -371,8 +386,8 @@ func (s *Server) saveBillAndItems(ctx context.Context, b bill, items []billItem)
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE bills SET restaurant = ?, tax_cents = ?, tip_cents = ?, status = ? WHERE id = ?`,
-		b.Restaurant, b.TaxCents, b.TipCents, b.Status, b.ID); err != nil {
+		`UPDATE bills SET restaurant = ?, currency = ?, tax_cents = ?, tip_cents = ?, status = ? WHERE id = ?`,
+		b.Restaurant, b.Currency, b.TaxCents, b.TipCents, b.Status, b.ID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM items WHERE bill_id = ?`, b.ID); err != nil {

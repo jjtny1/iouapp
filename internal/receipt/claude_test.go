@@ -6,9 +6,11 @@ import (
 )
 
 // wantReceipt is the structured receipt the test JSON inputs all encode.
+// The inputs carry no currency field, so parseReceiptJSON defaults it to USD.
 func wantReceipt() ParsedReceipt {
 	return ParsedReceipt{
 		Restaurant: "The Test Kitchen",
+		Currency:   "USD",
 		Items: []ParsedItem{
 			{Name: "Soup", PriceCents: 800, Qty: 1},
 			{Name: "Steak", PriceCents: 2995, Qty: 2},
@@ -27,6 +29,9 @@ func assertReceiptEqual(t *testing.T, got, want ParsedReceipt) {
 	t.Helper()
 	if got.Restaurant != want.Restaurant {
 		t.Errorf("restaurant = %q, want %q", got.Restaurant, want.Restaurant)
+	}
+	if got.Currency != want.Currency {
+		t.Errorf("currency = %q, want %q", got.Currency, want.Currency)
 	}
 	if got.TaxCents != want.TaxCents {
 		t.Errorf("tax_cents = %d, want %d", got.TaxCents, want.TaxCents)
@@ -119,6 +124,36 @@ func TestParseReceiptJSONQtyDefault(t *testing.T) {
 	}
 }
 
+// TestParseReceiptJSONCurrency verifies the currency is read and normalized,
+// defaulting to USD when missing or malformed.
+func TestParseReceiptJSONCurrency(t *testing.T) {
+	tests := []struct {
+		name     string
+		currency string // value of the "currency" field, or "" to omit it
+		want     string
+	}{
+		{name: "explicit PLN", currency: `"currency":"PLN",`, want: "PLN"},
+		{name: "lowercase normalized", currency: `"currency":"eur",`, want: "EUR"},
+		{name: "omitted defaults to USD", currency: "", want: "USD"},
+		{name: "empty defaults to USD", currency: `"currency":"",`, want: "USD"},
+		{name: "malformed defaults to USD", currency: `"currency":"dollars",`, want: "USD"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := `{"restaurant":"C",` + tt.currency +
+				`"items":[{"name":"X","price_cents":100,"qty":1}],` +
+				`"tax_cents":0,"tip_cents":0}`
+			got, err := parseReceiptJSON(input)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Currency != tt.want {
+				t.Errorf("currency = %q, want %q", got.Currency, tt.want)
+			}
+		})
+	}
+}
+
 func TestStubParser(t *testing.T) {
 	p := StubParser{}
 	inputs := [][]byte{
@@ -134,6 +169,9 @@ func TestStubParser(t *testing.T) {
 		}
 		if got.Restaurant == "" {
 			t.Error("expected non-empty restaurant")
+		}
+		if got.Currency != "USD" {
+			t.Errorf("currency = %q, want USD", got.Currency)
 		}
 		if len(got.Items) == 0 {
 			t.Error("expected at least one item")

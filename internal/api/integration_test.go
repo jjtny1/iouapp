@@ -212,6 +212,9 @@ func TestHappyPathHostFlow(t *testing.T) {
 	if tip, _ := afterUpload["tip_cents"].(float64); tip <= 0 {
 		t.Errorf("tip_cents = %v, want > 0", afterUpload["tip_cents"])
 	}
+	if afterUpload["currency"] != "USD" {
+		t.Errorf("currency = %v, want USD", afterUpload["currency"])
+	}
 
 	// GET the bill as host: full detail with host-only fields.
 	var detail map[string]any
@@ -383,6 +386,39 @@ func TestAccessControl(t *testing.T) {
 			t.Errorf("status = %d, want 403; body=%s", resp.StatusCode, raw)
 		}
 	})
+}
+
+func TestUpdateBillCurrency(t *testing.T) {
+	e := newTestEnv(t)
+	host := e.signIn("host@example.com")
+	bill := e.createBill(host)
+	billID := bill["id"].(string)
+	if bill["currency"] != "USD" {
+		t.Errorf("new bill currency = %v, want USD", bill["currency"])
+	}
+
+	// The host switches the bill to PLN; a lowercase code is normalized.
+	var updated map[string]any
+	e.doJSON(host, http.MethodPatch, "/api/bills/"+billID, map[string]any{
+		"restaurant": "Bar Mleczny", "currency": "pln",
+		"tax_cents": 0, "tip_cents": 0,
+	}, http.StatusOK, &updated)
+	if updated["currency"] != "PLN" {
+		t.Errorf("currency = %v, want PLN", updated["currency"])
+	}
+
+	// It persists across a fresh GET.
+	var reloaded map[string]any
+	e.doJSON(host, http.MethodGet, "/api/bills/"+billID, nil, http.StatusOK, &reloaded)
+	if reloaded["currency"] != "PLN" {
+		t.Errorf("reloaded currency = %v, want PLN", reloaded["currency"])
+	}
+
+	// A malformed currency code is rejected.
+	e.doJSON(host, http.MethodPatch, "/api/bills/"+billID, map[string]any{
+		"restaurant": "Bar Mleczny", "currency": "zloty",
+		"tax_cents": 0, "tip_cents": 0,
+	}, http.StatusBadRequest, nil)
 }
 
 func TestPayments(t *testing.T) {

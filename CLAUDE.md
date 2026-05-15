@@ -71,5 +71,16 @@ without it the app falls back to `receipt.StubParser` (a fixed sample receipt).
   active for v1; real x402/USDC settlement is the planned next step.
 - **Money is integer cents end to end.** Tax/tip are prorated with the
   largest-remainder method so totals reconcile to the exact cent.
+- **Bills carry a currency.** Each bill has an ISO 4217 `currency` (default
+  `USD`). The receipt parser detects it from the image; the host can override
+  it in the editor. `*_cents` values are always hundredths of that currency's
+  major unit, for _every_ currency (¥4100 → `410000`) — the frontend's
+  `formatMoney` (`web/src/money.ts`) uses `Intl.NumberFormat` to render the
+  right symbol and fraction digits. Currency-code validation lives in
+  `internal/money` (`NormalizeCurrency`).
+- **Payment settlement currency is separate from the bill currency.** Payments
+  settle in `payment.Currency` (`USDC`); the `payments.currency` column is the
+  settlement coin, not the bill's. FX conversion from a non-USD bill currency
+  to the settlement currency is intentionally deferred to the x402 work.
 - **Auth is magic-link.** In `SPLITIT_DEV=1` the link is returned in the JSON
   response; otherwise it's only logged server-side (no email delivery yet).
