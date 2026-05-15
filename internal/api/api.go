@@ -42,6 +42,7 @@ func NewRouter(database *db.DB, cfg config.Config, mailer auth.EmailSender) http
 	mux.HandleFunc("GET /api/bills/{id}", s.handleGetBill)
 	mux.HandleFunc("POST /api/bills/{id}/receipt", s.requireAuth(s.handleBillReceipt))
 	mux.HandleFunc("PATCH /api/bills/{id}", s.requireAuth(s.handleUpdateBill))
+	mux.HandleFunc("DELETE /api/bills/{id}", s.requireAuth(s.handleDeleteBill))
 	mux.HandleFunc("GET /api/by-token/{token}", s.handleBillByToken)
 	mux.HandleFunc("POST /api/bills/{id}/participants", s.handleJoinBill)
 	mux.HandleFunc("PUT /api/bills/{id}/claims", s.handleSetClaims)

@@ -12,28 +12,132 @@
   flex-direction: column;
 }
 
-/* List of past/settled bills */
-.bill-line {
-  padding: 12px 4px;
-  border-bottom: 1px dashed var(--line);
+/* ─── Deletable tab rows (Home) ─────────────────────────────────────── */
+/* A tab is a wrapper holding the tappable face, a dim delete handle, and a
+   confirm panel that slides over the row when the handle is pressed. */
+.tab {
+  position: relative;
+  overflow: hidden;
 }
-.bill-line:last-child {
-  border-bottom: 0;
-}
-
-/* Tappable card (open tab on Home) */
-.tap-card {
+.tab-card {
   background: var(--paper);
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 14px;
+}
+.tab-line {
+  border-bottom: 1px dashed var(--line);
+}
+.tab-line:last-of-type {
+  border-bottom: 0;
+}
+
+/* The tappable area opens the tab; right padding clears the delete handle. */
+.tab-face {
+  display: block;
   width: 100%;
+  background: transparent;
+  border: 0;
   text-align: left;
+  color: inherit;
   cursor: pointer;
   transition: transform 0.12s ease;
 }
-.tap-card:active {
+.tab-card > .tab-face {
+  padding: 14px 46px 14px 14px;
+}
+.tab-line > .tab-face {
+  padding: 12px 42px 12px 4px;
+}
+.tab-face:active {
   transform: scale(0.99);
+}
+
+/* Delete handle — dim until hovered/focused, then danger-red. */
+.tab-del {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  opacity: 0.4;
+  cursor: pointer;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
+}
+.tab-del:hover,
+.tab-del:focus-visible {
+  opacity: 1;
+  color: var(--danger);
+}
+
+/* Confirm panel — slides in over the row from the right. */
+.tab-confirm {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 12px;
+  animation: tab-confirm-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.tab-card > .tab-confirm {
+  background: var(--paper);
+}
+.tab-line > .tab-confirm {
+  background: var(--bg);
+}
+@keyframes tab-confirm-in {
+  from {
+    transform: translateX(101%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+.tab-confirm-msg {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.tab-confirm-msg.is-error {
+  color: var(--danger);
+}
+.tab-confirm-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+.tab-confirm-btn {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 13px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: opacity 0.12s ease;
+}
+.tab-confirm-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.tab-confirm-keep {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+}
+.tab-confirm-del {
+  background: var(--danger);
+  border: 1px solid var(--danger);
+  color: var(--paper);
 }
 
 /* Truncating restaurant name */

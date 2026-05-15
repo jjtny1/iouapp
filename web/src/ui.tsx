@@ -149,6 +149,23 @@ export const Icon = {
       <path d="M19 12H5M11 5l-7 7 7 7" />
     </svg>
   ),
+  Trash: ({ size = 16, ...p }: IconProps) => (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...p}
+    >
+      <path d="M4 7h16M10 11v6M14 11v6" />
+      <path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" />
+      <path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" />
+    </svg>
+  ),
   Wallet: ({ size = 16, ...p }: IconProps) => (
     <svg
       viewBox="0 0 24 24"
