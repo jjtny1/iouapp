@@ -78,7 +78,7 @@ export default function Home() {
                 {b.restaurant || "Untitled bill"} — {b.status}
                 {" · "}
                 {dollars(
-                  b.items.reduce((s, it) => s + it.price_cents * it.qty, 0) +
+                  b.items.reduce((s, it) => s + it.price_cents, 0) +
                     b.tax_cents +
                     b.tip_cents,
                 )}

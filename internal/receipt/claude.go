@@ -19,8 +19,9 @@ const (
 )
 
 const parsePrompt = `Extract the restaurant bill from this receipt image. ` +
-	`Identify the restaurant name, every line item with its name, price, and quantity, ` +
-	`the tax, and the tip. Express all monetary amounts as integer cents (e.g. $13.95 -> 1395). ` +
+	`Identify the restaurant name, every line item with its name, per-unit price, and quantity, ` +
+	`the tax, and the tip. The price is the price of a single unit, not the line total. ` +
+	`Express all monetary amounts as integer cents (e.g. $13.95 -> 1395). ` +
 	`If a value is missing use 0 or an empty string. ` +
 	`Respond with ONLY a single JSON object and no prose, code fences, or explanation, ` +
 	`matching exactly this shape: ` +

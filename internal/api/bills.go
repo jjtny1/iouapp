@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jjtny1/splitit/internal/auth"
+	"github.com/jjtny1/splitit/internal/receipt"
 )
 
 const maxReceiptBytes = 10 << 20
@@ -19,7 +20,6 @@ type billItem struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
 	PriceCents int    `json:"price_cents"`
-	Qty        int    `json:"qty"`
 	Position   int    `json:"position"`
 }
 
@@ -208,17 +208,12 @@ func (s *Server) handleBillReceipt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]billItem, 0, len(parsed.Items))
-	for i, it := range parsed.Items {
-		qty := it.Qty
-		if qty < 1 {
-			qty = 1
-		}
-		price := it.PriceCents
-		if price < 0 {
-			price = 0
-		}
-		items = append(items, billItem{Name: it.Name, PriceCents: price, Qty: qty, Position: i})
+	// Expand multi-quantity lines into one item per unit so each unit can be
+	// claimed independently in the friend split.
+	flat := receipt.Flatten(parsed.Items)
+	items := make([]billItem, 0, len(flat))
+	for i, it := range flat {
+		items = append(items, billItem{Name: it.Name, PriceCents: it.PriceCents, Position: i})
 	}
 
 	b.Restaurant = parsed.Restaurant
@@ -267,7 +262,6 @@ func (s *Server) handleUpdateBill(w http.ResponseWriter, r *http.Request) {
 		Items      []struct {
 			Name       string `json:"name"`
 			PriceCents int    `json:"price_cents"`
-			Qty        int    `json:"qty"`
 		} `json:"items"`
 	}
 	if !decodeJSON(w, r, &req) {
@@ -288,11 +282,7 @@ func (s *Server) handleUpdateBill(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "item prices must be non-negative"})
 			return
 		}
-		if it.Qty < 1 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "item quantity must be at least 1"})
-			return
-		}
-		items = append(items, billItem{Name: it.Name, PriceCents: it.PriceCents, Qty: it.Qty, Position: i})
+		items = append(items, billItem{Name: it.Name, PriceCents: it.PriceCents, Position: i})
 	}
 
 	b.Restaurant = req.Restaurant
@@ -325,7 +315,7 @@ func (s *Server) loadBill(ctx context.Context, id string) (bill, error) {
 // loadItems returns a bill's items ordered by position.
 func (s *Server) loadItems(ctx context.Context, billID string) ([]billItem, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT id, name, price_cents, qty, position FROM items
+		`SELECT id, name, price_cents, position FROM items
 		 WHERE bill_id = ? ORDER BY position`, billID)
 	if err != nil {
 		return nil, err
@@ -335,7 +325,7 @@ func (s *Server) loadItems(ctx context.Context, billID string) ([]billItem, erro
 	items := []billItem{}
 	for rows.Next() {
 		var it billItem
-		if err := rows.Scan(&it.ID, &it.Name, &it.PriceCents, &it.Qty, &it.Position); err != nil {
+		if err := rows.Scan(&it.ID, &it.Name, &it.PriceCents, &it.Position); err != nil {
 			return nil, err
 		}
 		items = append(items, it)
@@ -364,8 +354,8 @@ func (s *Server) saveBillAndItems(ctx context.Context, b bill, items []billItem)
 		items[i].ID = uuid.NewString()
 		items[i].Position = i
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO items (id, bill_id, name, price_cents, qty, position) VALUES (?, ?, ?, ?, ?, ?)`,
-			items[i].ID, b.ID, items[i].Name, items[i].PriceCents, items[i].Qty, items[i].Position); err != nil {
+			`INSERT INTO items (id, bill_id, name, price_cents, position) VALUES (?, ?, ?, ?, ?)`,
+			items[i].ID, b.ID, items[i].Name, items[i].PriceCents, items[i].Position); err != nil {
 			return err
 		}
 	}

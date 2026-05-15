@@ -8,7 +8,6 @@ export interface BillItem {
   id: string;
   name: string;
   price_cents: number;
-  qty: number;
   position: number;
 }
 
@@ -30,7 +29,7 @@ export interface BillUpdate {
   tax_cents: number;
   tip_cents: number;
   status?: string;
-  items: { name: string; price_cents: number; qty: number }[];
+  items: { name: string; price_cents: number }[];
 }
 
 export type PaymentStatus = "none" | "pending" | "paid";
