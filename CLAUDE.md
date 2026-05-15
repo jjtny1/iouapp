@@ -110,6 +110,16 @@ IOU_DEV=1 PORT=8231 IOU_BASE_URL=http://localhost:8231 \
   unit; `price_cents` is that unit's full price. Multi-quantity receipt lines
   are expanded at parse time (see below), so nothing downstream multiplies by a
   quantity.
+- **Don't encode Venmo deep-link params with `url.Values.Encode()` alone.** It
+  form-encodes spaces as `+`, and Venmo's deep-link parser renders the `+`
+  literally in the payment note (`My+share+of+Cafe…`). Percent-encode spaces as
+  `%20` instead — `internal/payment` does
+  `strings.ReplaceAll(q.Encode(), "+", "%20")`.
+- **Don't put the `venmo.com` web link in the pay QR code.** A phone camera
+  scanning an `https://account.venmo.com/pay?…` link opens Venmo's _website_ (a
+  login wall), not the app. Encode the `venmo://` app deep link in the QR — the
+  camera opens it straight in the Venmo app. The `web_url` is only for paying on
+  the desktop machine itself.
 - **Don't build the production Docker image without `--platform linux/amd64`.**
   Apple Silicon Macs build arm64 images by default, but the Fargate task runs
   x86_64 — a native-arch image pushes fine, then the task dies on start with an
@@ -141,13 +151,15 @@ NOT EXISTS` never alters an existing table, so a column added only to
 - **Payments are Venmo hand-offs.** The host saves a `venmo_handle` on their
   user row (set in the bill editor or on the Home page; new tabs reuse it).
   `POST /pay` returns a payment intent — the host's handle, the amount owed,
-  and `app_url`/`web_url` deep links built by `internal/payment`. Phones get
-  the `venmo://` app link; desktops get a QR code encoding the `web_url`.
-  Venmo reports nothing back, so a payment is marked paid by the friend's
-  self-report (`POST /pay/confirm`, no proof) or by the host toggling it
-  (`POST /bills/{id}/payments/{pid}` with `{"paid":bool}`). The `payments`
-  table keeps vestigial `provider`/`tx_ref` columns from the earlier USDC
-  design — always written `'venmo'`/`NULL`, never read.
+  and `app_url` (`venmo://`) / `web_url` (`account.venmo.com`) deep links built
+  by `internal/payment`. Phones open `app_url` directly; the desktop pay sheet
+  shows a QR code that _also_ encodes `app_url` (so a scanning phone lands in
+  the Venmo app), with `web_url` only as a click-through for paying on the
+  desktop itself. Venmo reports nothing back, so a payment is marked paid by
+  the friend's self-report (`POST /pay/confirm`, no proof) or by the host
+  toggling it (`POST /bills/{id}/payments/{pid}` with `{"paid":bool}`). The
+  `payments` table keeps vestigial `provider`/`tx_ref` columns from the earlier
+  USDC design — always written `'venmo'`/`NULL`, never read.
 - **Money is integer cents end to end.** Tax, tip and a percent service charge
   are prorated with the largest-remainder method against the bill's _full_ item
   subtotal — `split.prorate` treats the unclaimed items as one extra bucket, so
