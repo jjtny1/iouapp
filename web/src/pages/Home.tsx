@@ -4,6 +4,19 @@ import { api, type Bill } from "../api";
 import { useAuth } from "../auth";
 import { formatMoney } from "../money";
 
+// billTotalCents is the bill's full amount for the list summary: items, tax,
+// tip and the service charge (a percent charge applied to the item subtotal).
+function billTotalCents(b: Bill): number {
+  const subtotal = b.items.reduce((s, it) => s + it.price_cents, 0);
+  const service =
+    b.service_charge_kind === "percent"
+      ? Math.round((b.service_charge_rate_bps * subtotal) / 10000)
+      : b.service_charge_kind === "fixed"
+        ? b.service_charge_cents
+        : 0;
+  return subtotal + b.tax_cents + b.tip_cents + service;
+}
+
 export default function Home() {
   const { user, setUser } = useAuth();
   const navigate = useNavigate();
@@ -74,12 +87,7 @@ export default function Home() {
               <Link to={`/bills/${b.id}`}>
                 {b.restaurant || "Untitled bill"} — {b.status}
                 {" · "}
-                {formatMoney(
-                  b.items.reduce((s, it) => s + it.price_cents, 0) +
-                    b.tax_cents +
-                    b.tip_cents,
-                  b.currency,
-                )}
+                {formatMoney(billTotalCents(b), b.currency)}
               </Link>
             </li>
           ))}

@@ -11,12 +11,21 @@ export interface BillItem {
   position: number;
 }
 
+// ServiceChargeKind controls how a mandatory service charge is split:
+// "percent" prorates over what each person ordered, "fixed" splits evenly
+// across the diner headcount, "none" means there is no service charge.
+export type ServiceChargeKind = "none" | "percent" | "fixed";
+
 export interface Bill {
   id: string;
   restaurant: string;
   currency: string;
   tax_cents: number;
   tip_cents: number;
+  service_charge_kind: ServiceChargeKind;
+  service_charge_rate_bps: number;
+  service_charge_cents: number;
+  service_charge_headcount: number;
   status: string;
   items: BillItem[];
   created_at: number;
@@ -29,6 +38,10 @@ export interface BillUpdate {
   currency: string;
   tax_cents: number;
   tip_cents: number;
+  service_charge_kind: ServiceChargeKind;
+  service_charge_rate_bps: number;
+  service_charge_cents: number;
+  service_charge_headcount: number;
   status?: string;
   items: { name: string; price_cents: number }[];
 }
@@ -66,12 +79,14 @@ export interface ParticipantShare {
   item_subtotal_cents: number;
   tax_cents: number;
   tip_cents: number;
+  service_cents: number;
   total_cents: number;
 }
 
 export interface SplitResult {
   participants: ParticipantShare[];
   unclaimed_cents: number;
+  service_charge_cents: number;
   grand_total_cents: number;
 }
 

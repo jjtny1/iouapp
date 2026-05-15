@@ -73,6 +73,10 @@ func (s *Server) amountOwed(ctx context.Context, b bill, participantID string) (
 	if err != nil {
 		return 0, err
 	}
+	parts, err := s.loadParticipants(ctx, b.ID)
+	if err != nil {
+		return 0, err
+	}
 	splitItems := make([]split.Item, 0, len(items))
 	for _, it := range items {
 		splitItems = append(splitItems, split.Item{
@@ -80,7 +84,23 @@ func (s *Server) amountOwed(ctx context.Context, b bill, participantID string) (
 			TotalCents: it.PriceCents,
 		})
 	}
-	summary := split.Compute(splitItems, b.TaxCents, b.TipCents, claims)
+	participantIDs := make([]string, 0, len(parts))
+	for _, p := range parts {
+		participantIDs = append(participantIDs, p.ID)
+	}
+	summary := split.Compute(split.Input{
+		Items:    splitItems,
+		TaxCents: b.TaxCents,
+		TipCents: b.TipCents,
+		Service: split.ServiceCharge{
+			Kind:       b.ServiceChargeKind,
+			RateBps:    b.ServiceChargeRateBps,
+			FixedCents: b.ServiceChargeCents,
+			Headcount:  b.ServiceChargeHeadcount,
+		},
+		Claims:         claims,
+		ParticipantIDs: participantIDs,
+	})
 	for _, ps := range summary.Participants {
 		if ps.ParticipantID == participantID {
 			return ps.TotalCents, nil

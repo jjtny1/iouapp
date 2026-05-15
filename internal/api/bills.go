@@ -45,6 +45,15 @@ type bill struct {
 	Items      []billItem `json:"items"`
 	CreatedAt  int64      `json:"created_at"`
 
+	// Service charge: ServiceChargeKind is "none", "percent", or "fixed".
+	// RateBps (basis points) applies to a percent charge; Cents is the flat
+	// amount of a fixed charge; Headcount is the fixed charge's diner count
+	// (0 means split across the joined participants).
+	ServiceChargeKind      string `json:"service_charge_kind"`
+	ServiceChargeRateBps   int    `json:"service_charge_rate_bps"`
+	ServiceChargeCents     int    `json:"service_charge_cents"`
+	ServiceChargeHeadcount int    `json:"service_charge_headcount"`
+
 	hostUserID  string
 	friendToken string
 }
@@ -52,14 +61,18 @@ type bill struct {
 // billJSON renders a bill, including host-only fields only when host is true.
 func (s *Server) billJSON(b bill, host bool) map[string]any {
 	out := map[string]any{
-		"id":         b.ID,
-		"restaurant": b.Restaurant,
-		"currency":   b.Currency,
-		"tax_cents":  b.TaxCents,
-		"tip_cents":  b.TipCents,
-		"status":     b.Status,
-		"items":      b.Items,
-		"created_at": b.CreatedAt,
+		"id":                       b.ID,
+		"restaurant":               b.Restaurant,
+		"currency":                 b.Currency,
+		"tax_cents":                b.TaxCents,
+		"tip_cents":                b.TipCents,
+		"service_charge_kind":      b.ServiceChargeKind,
+		"service_charge_rate_bps":  b.ServiceChargeRateBps,
+		"service_charge_cents":     b.ServiceChargeCents,
+		"service_charge_headcount": b.ServiceChargeHeadcount,
+		"status":                   b.Status,
+		"items":                    b.Items,
+		"created_at":               b.CreatedAt,
 	}
 	if host {
 		out["friend_token"] = b.friendToken
@@ -78,13 +91,14 @@ func (s *Server) handleCreateBill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b := bill{
-		ID:          uuid.NewString(),
-		Currency:    "USD",
-		Status:      "draft",
-		CreatedAt:   time.Now().Unix(),
-		Items:       []billItem{},
-		hostUserID:  u.ID,
-		friendToken: token,
+		ID:                uuid.NewString(),
+		Currency:          "USD",
+		Status:            "draft",
+		CreatedAt:         time.Now().Unix(),
+		Items:             []billItem{},
+		ServiceChargeKind: "none",
+		hostUserID:        u.ID,
+		friendToken:       token,
 	}
 	if _, err := s.DB.ExecContext(r.Context(),
 		`INSERT INTO bills (id, host_user_id, restaurant, currency, tax_cents, tip_cents, status, friend_token, created_at)
@@ -101,7 +115,9 @@ func (s *Server) handleListBills(w http.ResponseWriter, r *http.Request) {
 	u := r.Context().Value(userCtxKey).(user)
 
 	rows, err := s.DB.QueryContext(r.Context(),
-		`SELECT id, restaurant, currency, tax_cents, tip_cents, status, friend_token, created_at
+		`SELECT id, restaurant, currency, tax_cents, tip_cents,
+		        service_charge_kind, service_charge_rate_bps, service_charge_cents, service_charge_headcount,
+		        status, friend_token, created_at
 		 FROM bills WHERE host_user_id = ? ORDER BY created_at DESC`, u.ID)
 	if err != nil {
 		log.Printf("list bills: query: %v", err)
@@ -114,6 +130,7 @@ func (s *Server) handleListBills(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var b bill
 		if err := rows.Scan(&b.ID, &b.Restaurant, &b.Currency, &b.TaxCents, &b.TipCents,
+			&b.ServiceChargeKind, &b.ServiceChargeRateBps, &b.ServiceChargeCents, &b.ServiceChargeHeadcount,
 			&b.Status, &b.friendToken, &b.CreatedAt); err != nil {
 			log.Printf("list bills: scan: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
@@ -245,6 +262,7 @@ func (s *Server) handleBillReceipt(w http.ResponseWriter, r *http.Request) {
 	if b.TipCents < 0 {
 		b.TipCents = 0
 	}
+	applyParsedServiceCharge(&b, parsed.ServiceCharge)
 
 	if err := s.saveBillAndItems(r.Context(), b, items); err != nil {
 		log.Printf("bill receipt: save: %v", err)
@@ -275,12 +293,16 @@ func (s *Server) handleUpdateBill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Restaurant string `json:"restaurant"`
-		Currency   string `json:"currency"`
-		TaxCents   int    `json:"tax_cents"`
-		TipCents   int    `json:"tip_cents"`
-		Status     string `json:"status"`
-		Items      []struct {
+		Restaurant             string `json:"restaurant"`
+		Currency               string `json:"currency"`
+		TaxCents               int    `json:"tax_cents"`
+		TipCents               int    `json:"tip_cents"`
+		ServiceChargeKind      string `json:"service_charge_kind"`
+		ServiceChargeRateBps   int    `json:"service_charge_rate_bps"`
+		ServiceChargeCents     int    `json:"service_charge_cents"`
+		ServiceChargeHeadcount int    `json:"service_charge_headcount"`
+		Status                 string `json:"status"`
+		Items                  []struct {
 			Name       string `json:"name"`
 			PriceCents int    `json:"price_cents"`
 		} `json:"items"`
@@ -290,6 +312,14 @@ func (s *Server) handleUpdateBill(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TaxCents < 0 || req.TipCents < 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tax and tip must be non-negative"})
+		return
+	}
+	scKind, scRate, scCents, scHead, ok := normalizeServiceCharge(
+		req.ServiceChargeKind, req.ServiceChargeRateBps, req.ServiceChargeCents, req.ServiceChargeHeadcount)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "service charge must be none, a non-negative percent, or a non-negative fixed amount",
+		})
 		return
 	}
 	if req.Status != "" && req.Status != "draft" && req.Status != "open" {
@@ -321,6 +351,10 @@ func (s *Server) handleUpdateBill(w http.ResponseWriter, r *http.Request) {
 	b.Restaurant = req.Restaurant
 	b.TaxCents = req.TaxCents
 	b.TipCents = req.TipCents
+	b.ServiceChargeKind = scKind
+	b.ServiceChargeRateBps = scRate
+	b.ServiceChargeCents = scCents
+	b.ServiceChargeHeadcount = scHead
 	if req.Status != "" {
 		b.Status = req.Status
 	}
@@ -338,9 +372,12 @@ func (s *Server) handleUpdateBill(w http.ResponseWriter, r *http.Request) {
 func (s *Server) loadBill(ctx context.Context, id string) (bill, error) {
 	var b bill
 	err := s.DB.QueryRowContext(ctx,
-		`SELECT id, host_user_id, restaurant, currency, tax_cents, tip_cents, status, friend_token, created_at
+		`SELECT id, host_user_id, restaurant, currency, tax_cents, tip_cents,
+		        service_charge_kind, service_charge_rate_bps, service_charge_cents, service_charge_headcount,
+		        status, friend_token, created_at
 		 FROM bills WHERE id = ?`, id).
 		Scan(&b.ID, &b.hostUserID, &b.Restaurant, &b.Currency, &b.TaxCents, &b.TipCents,
+			&b.ServiceChargeKind, &b.ServiceChargeRateBps, &b.ServiceChargeCents, &b.ServiceChargeHeadcount,
 			&b.Status, &b.friendToken, &b.CreatedAt)
 	return b, err
 }
@@ -376,8 +413,12 @@ func (s *Server) saveBillAndItems(ctx context.Context, b bill, items []billItem)
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE bills SET restaurant = ?, currency = ?, tax_cents = ?, tip_cents = ?, status = ? WHERE id = ?`,
-		b.Restaurant, b.Currency, b.TaxCents, b.TipCents, b.Status, b.ID); err != nil {
+		`UPDATE bills SET restaurant = ?, currency = ?, tax_cents = ?, tip_cents = ?,
+		        service_charge_kind = ?, service_charge_rate_bps = ?, service_charge_cents = ?,
+		        service_charge_headcount = ?, status = ? WHERE id = ?`,
+		b.Restaurant, b.Currency, b.TaxCents, b.TipCents,
+		b.ServiceChargeKind, b.ServiceChargeRateBps, b.ServiceChargeCents, b.ServiceChargeHeadcount,
+		b.Status, b.ID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM items WHERE bill_id = ?`, b.ID); err != nil {
@@ -393,4 +434,53 @@ func (s *Server) saveBillAndItems(ctx context.Context, b bill, items []billItem)
 		}
 	}
 	return tx.Commit()
+}
+
+// maxServiceChargeBps caps a percent service charge at 1000% to reject
+// obviously malformed input while leaving any realistic rate valid.
+const maxServiceChargeBps = 100000
+
+// normalizeServiceCharge validates host-supplied service charge fields and
+// returns the cleaned values, zeroing fields irrelevant to the chosen kind.
+// ok is false when the input is malformed. An empty kind normalizes to "none".
+func normalizeServiceCharge(kind string, rateBps, cents, headcount int) (outKind string, outRate, outCents, outHead int, ok bool) {
+	switch kind {
+	case "", "none":
+		return "none", 0, 0, 0, true
+	case "percent":
+		if rateBps < 0 || rateBps > maxServiceChargeBps {
+			return "", 0, 0, 0, false
+		}
+		return "percent", rateBps, 0, 0, true
+	case "fixed":
+		if cents < 0 || headcount < 0 {
+			return "", 0, 0, 0, false
+		}
+		return "fixed", 0, cents, headcount, true
+	default:
+		return "", 0, 0, 0, false
+	}
+}
+
+// applyParsedServiceCharge copies a service charge read from a receipt onto a
+// bill, converting a percent rate to basis points.
+func applyParsedServiceCharge(b *bill, sc receipt.ParsedServiceCharge) {
+	switch sc.Kind {
+	case "percent":
+		b.ServiceChargeKind = "percent"
+		b.ServiceChargeRateBps = int(sc.Percent*100 + 0.5)
+		b.ServiceChargeCents = 0
+	case "fixed":
+		b.ServiceChargeKind = "fixed"
+		b.ServiceChargeRateBps = 0
+		b.ServiceChargeCents = sc.AmountCents
+		if b.ServiceChargeCents < 0 {
+			b.ServiceChargeCents = 0
+		}
+	default:
+		b.ServiceChargeKind = "none"
+		b.ServiceChargeRateBps = 0
+		b.ServiceChargeCents = 0
+	}
+	b.ServiceChargeHeadcount = 0
 }
