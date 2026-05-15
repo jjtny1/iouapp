@@ -1,0 +1,57 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(npm *)",
+      "Bash(npx *)",
+      "Bash(node *)",
+      "Bash(cat *)",
+      "Bash(ls *)",
+      "Bash(grep *)",
+      "Bash(find *)",
+      "Bash(curl *)",
+      "Bash(mkdir *)",
+      "Bash(jq *)",
+      "Read(*)",
+      "Edit(*)",
+      "Write(*)",
+      "Glob(*)",
+      "Grep(*)",
+      "Task(*)"
+    ],
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(sudo rm *)",
+      "Bash(chmod 777 *)",
+      "Bash(git push --force origin main)",
+      "Read(.env)",
+      "Read(**/*.key)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx prettier --write \"$CLAUDE_FILE_PATH\" 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mkdir -p .claude/audit && echo \"$(date -u +%FT%TZ) $CLAUDE_TOOL_INPUT\" >> .claude/audit/commands.log 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  },
+  "env": { "CLAUDE_BORIS_VERSION": "2.0.0" }
+}
