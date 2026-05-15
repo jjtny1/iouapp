@@ -42,10 +42,13 @@ without it the app falls back to `receipt.StubParser` (a fixed sample receipt).
 
 The Go server also serves the built SPA, so for a full manual test build the
 frontend (`cd web && npm run build`) and hit the Go server directly — no Vite
-proxy needed. Run on a non-default port if other agents may be using `:8080`:
+proxy needed. Pick an uncommon high port — other agents grab `:8080` and even
+`:8099`; if the port is taken the server logs `bind: address already in use`
+and exits (don't `kill` the squatter, it's another agent — just pick another
+port):
 
 ```bash
-IOU_DEV=1 PORT=8099 IOU_BASE_URL=http://localhost:8099 \
+IOU_DEV=1 PORT=8231 IOU_BASE_URL=http://localhost:8231 \
   IOU_DB=/tmp/iou-test.db ANTHROPIC_API_KEY=sk-ant-... \
   go run ./cmd/server
 ```
@@ -76,6 +79,16 @@ IOU_DEV=1 PORT=8099 IOU_BASE_URL=http://localhost:8099 \
   programmatic uploads.
 - **Don't send HEIC to the Anthropic vision API.** It accepts only JPEG, PNG,
   GIF, and WebP. iPhone photos are HEIC and must be converted client-side first.
+- **Don't add VAT-inclusive tax as `tax_cents`.** `tax_cents` is tax _added on
+  top_ of item prices (US-style sales tax). European VAT is already baked into
+  the printed prices — often shown broken out into several rate lines (`VAT
+23%`, `VAT 8%`) for information only. Reporting it as `tax_cents` double-counts
+  it and overshoots the receipt total. Two defences enforce this: the parse
+  prompt makes the model reconcile its parts against the printed
+  `grand_total_cents` before answering, and `receipt.reconcile` (run inside
+  `parseReceiptJSON`) re-checks server-side — when items + tip + service already
+  equal the printed total it zeroes the tax, and logs any mismatch it can't
+  explain. The invariant: item prices + tax + tip + service == printed total.
 - **Don't assume the Go server loads a `.env` file** — it does not. Pass
   `ANTHROPIC_API_KEY` inline on every start, or parsing silently falls back to
   the stub parser.
@@ -100,6 +113,13 @@ IOU_DEV=1 PORT=8099 IOU_BASE_URL=http://localhost:8099 \
 
 ## Learned Patterns
 
+- **Schema changes need a migration, not just `schema.sql`.** `CREATE TABLE IF
+NOT EXISTS` never alters an existing table, so a column added only to
+  `schema.sql` is missing on any database created before it. Add new columns in
+  _two_ places: the `CREATE TABLE` in `internal/db/schema.sql` (for fresh DBs)
+  and the `migrations` slice in `internal/db/db.go` as an idempotent
+  `ALTER TABLE … ADD COLUMN` (for existing DBs — a `duplicate column` error is
+  caught and ignored).
 - **Receipt images are normalized client-side** in `web/src/image.ts`
   (`prepareReceiptImage`): HEIC/HEIF → JPEG, plus downscaling large photos to
   ≤1600px. The heavy libheif WASM in `heic-to` is lazy-loaded via dynamic
@@ -111,8 +131,24 @@ IOU_DEV=1 PORT=8099 IOU_BASE_URL=http://localhost:8099 \
   flow testable offline.
 - **Payments are behind a `payment.Provider` interface** — `MockProvider` is
   active for v1; real x402/USDC settlement is the planned next step.
-- **Money is integer cents end to end.** Tax/tip are prorated with the
-  largest-remainder method so totals reconcile to the exact cent.
+- **Money is integer cents end to end.** Tax, tip and a percent service charge
+  are prorated with the largest-remainder method against the bill's _full_ item
+  subtotal — `split.prorate` treats the unclaimed items as one extra bucket, so
+  a claimer is never charged for items they didn't claim and the amount owed on
+  unclaimed items stays in `UnclaimedCents`. Totals still reconcile to the exact
+  cent.
+- **Service charge is a bill field, never a claimable item.** Each bill has a
+  `service_charge_kind` (`none`/`percent`/`fixed`). A `percent` charge stores a
+  rate in basis points (`service_charge_rate_bps`, 1250 = 12.5%); its amount is
+  derived from the item subtotal at split time (`split.serviceTotal`) so it
+  stays correct as items are edited, and it is prorated over claimers like tax.
+  A `fixed` charge stores a flat `service_charge_cents` and an optional
+  `service_charge_headcount`; it splits evenly across `max(headcount, joined
+count)` shares — shares beyond the joined participants go to `unclaimed` so
+  totals still reconcile. `split.Compute` takes a `split.Input` struct (not
+  positional args) and needs the full participant ID list, since a fixed charge
+  is owed even by participants who claimed nothing. The receipt parser detects
+  the charge (`ParsedReceipt.ServiceCharge`); `StubParser` returns a 10% one.
 - **Bills carry a currency.** Each bill has an ISO 4217 `currency` (default
   `USD`). The receipt parser detects it from the image; the host can override
   it in the editor. `*_cents` values are always hundredths of that currency's
@@ -137,3 +173,10 @@ IOU_DEV=1 PORT=8099 IOU_BASE_URL=http://localhost:8099 \
   `Verify` sets the user and clobber it back to `null`, bouncing to `/signin`.
   A full page reload of `/` after the cookie is set re-authenticates cleanly.
   Known issue, not yet fixed.
+- **Editing a bill after friends have claimed fails.** `saveBillAndItems` (used
+  by `PATCH /api/bills/{id}` and receipt re-upload) deletes and recreates every
+  `items` row; once `claims` reference those items the delete violates the
+  `claims.item_id` foreign key and the request 500s with `FOREIGN KEY
+constraint failed`. The host must finish editing _before_ sharing the link.
+  Known issue, not yet fixed — a proper fix needs item IDs preserved across
+  edits so claims survive.

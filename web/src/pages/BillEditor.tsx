@@ -6,7 +6,12 @@ import {
   type DragEvent,
 } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { api, type Bill, type BillSummary } from "../api";
+import {
+  api,
+  type Bill,
+  type BillSummary,
+  type ServiceChargeKind,
+} from "../api";
 import { useAuth } from "../auth";
 import { prepareReceiptImage } from "../image";
 import { formatMoney } from "../money";
@@ -139,6 +144,10 @@ export default function BillEditor() {
   const [items, setItems] = useState<DraftItem[]>([]);
   const [taxDollars, setTaxDollars] = useState("0.00");
   const [tipDollars, setTipDollars] = useState("0.00");
+  const [scKind, setScKind] = useState<ServiceChargeKind>("none");
+  const [scRatePercent, setScRatePercent] = useState("0");
+  const [scFixedDollars, setScFixedDollars] = useState("0.00");
+  const [scHeadcount, setScHeadcount] = useState("");
   const [summary, setSummary] = useState<BillSummary | null>(null);
 
   function loadFromBill(b: Bill) {
@@ -147,6 +156,12 @@ export default function BillEditor() {
     setCurrency(b.currency);
     setTaxDollars(centsToDollars(b.tax_cents));
     setTipDollars(centsToDollars(b.tip_cents));
+    setScKind(b.service_charge_kind);
+    setScRatePercent(String(b.service_charge_rate_bps / 100));
+    setScFixedDollars(centsToDollars(b.service_charge_cents));
+    setScHeadcount(
+      b.service_charge_headcount > 0 ? String(b.service_charge_headcount) : "",
+    );
     setItems(
       b.items.map((it) => ({
         name: it.name,
@@ -211,6 +226,18 @@ export default function BillEditor() {
     void handleFile(e.dataTransfer.files?.[0]);
   }
 
+  // Service charge entry: a percent rate (stored as basis points) or a fixed
+  // amount; scHeadcount blank means "split across everyone who joined" (0).
+  const ratePercentNum = parseFloat(scRatePercent);
+  const scRateBps = Number.isFinite(ratePercentNum)
+    ? Math.max(0, Math.round(ratePercentNum * 100))
+    : 0;
+  const scFixedCents = dollarsToCents(scFixedDollars);
+  const scHeadcountNum =
+    scHeadcount.trim() === ""
+      ? 0
+      : Math.max(0, Math.trunc(Number(scHeadcount)) || 0);
+
   async function onSave() {
     if (!id) return;
     setError(null);
@@ -221,6 +248,10 @@ export default function BillEditor() {
         currency,
         tax_cents: dollarsToCents(taxDollars),
         tip_cents: dollarsToCents(tipDollars),
+        service_charge_kind: scKind,
+        service_charge_rate_bps: scKind === "percent" ? scRateBps : 0,
+        service_charge_cents: scKind === "fixed" ? scFixedCents : 0,
+        service_charge_headcount: scKind === "fixed" ? scHeadcountNum : 0,
         items: items.map((it) => ({
           name: it.name,
           price_cents: dollarsToCents(it.priceDollars),
@@ -372,8 +403,17 @@ export default function BillEditor() {
     (sum, it) => sum + dollarsToCents(it.priceDollars),
     0,
   );
+  const serviceCents =
+    scKind === "percent"
+      ? Math.round((scRateBps * subtotalCents) / 10000)
+      : scKind === "fixed"
+        ? scFixedCents
+        : 0;
   const totalCents =
-    subtotalCents + dollarsToCents(taxDollars) + dollarsToCents(tipDollars);
+    subtotalCents +
+    dollarsToCents(taxDollars) +
+    dollarsToCents(tipDollars) +
+    serviceCents;
   const fmt = (c: number) => formatMoney(c, currency);
   const joined = summary?.participants ?? [];
 
@@ -510,6 +550,12 @@ export default function BillEditor() {
                 style={{ fontSize: 12, color: "var(--muted)" }}
               />
             </div>
+            {scKind !== "none" && (
+              <div className="line">
+                <span>Service</span>
+                <span>{fmt(serviceCents)}</span>
+              </div>
+            )}
             <div className="line grand">
               <span>Total</span>
               <span>{fmt(totalCents)}</span>
@@ -517,6 +563,76 @@ export default function BillEditor() {
           </div>
           <ReceiptZig />
         </div>
+
+        {/* Service charge — appears only when the receipt had one detected.
+            Setting the type to None and saving removes it. */}
+        {bill.service_charge_kind !== "none" && (
+          <div className="card mt-4">
+            <p className="eyebrow">Service charge</p>
+            <p className="body muted mt-2" style={{ fontSize: 12 }}>
+              A mandatory restaurant fee from the receipt. It's split
+              automatically — never claimed as an item.
+            </p>
+            <select
+              className="input mt-3"
+              value={scKind}
+              onChange={(e) => setScKind(e.target.value as ServiceChargeKind)}
+            >
+              <option value="none">None — remove it</option>
+              <option value="percent">Percentage of the bill</option>
+              <option value="fixed">Fixed amount</option>
+            </select>
+
+            {scKind === "percent" && (
+              <div className="col gap-1 mt-3">
+                <label className="eyebrow">Rate (%)</label>
+                <input
+                  className="input input-mono"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={scRatePercent}
+                  onChange={(e) => setScRatePercent(e.target.value)}
+                />
+                <p className="body muted" style={{ fontSize: 11 }}>
+                  {fmt(serviceCents)} — split in proportion to what each person
+                  ordered.
+                </p>
+              </div>
+            )}
+
+            {scKind === "fixed" && (
+              <div className="col gap-1 mt-3">
+                <label className="eyebrow">Amount ({currency})</label>
+                <input
+                  className="input input-mono"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={scFixedDollars}
+                  onChange={(e) => setScFixedDollars(e.target.value)}
+                />
+                <label className="eyebrow" style={{ marginTop: 8 }}>
+                  Number of diners
+                </label>
+                <input
+                  className="input input-mono"
+                  type="number"
+                  step="1"
+                  min="0"
+                  placeholder="blank = everyone who joins"
+                  value={scHeadcount}
+                  onChange={(e) => setScHeadcount(e.target.value)}
+                />
+                <p className="body muted" style={{ fontSize: 11 }}>
+                  Split evenly. Leave the headcount blank to divide it among
+                  everyone who joins; set it higher if some diners aren't using
+                  the app — their shares then show as unclaimed.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
 
         <button
           className="btn btn-accent btn-block mt-4"

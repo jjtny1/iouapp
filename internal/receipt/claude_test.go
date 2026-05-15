@@ -15,8 +15,9 @@ func wantReceipt() ParsedReceipt {
 			{Name: "Soup", PriceCents: 800, Qty: 1},
 			{Name: "Steak", PriceCents: 2995, Qty: 2},
 		},
-		TaxCents: 350,
-		TipCents: 600,
+		TaxCents:      350,
+		TipCents:      600,
+		ServiceCharge: ParsedServiceCharge{Kind: "none"},
 	}
 }
 
@@ -38,6 +39,9 @@ func assertReceiptEqual(t *testing.T, got, want ParsedReceipt) {
 	}
 	if got.TipCents != want.TipCents {
 		t.Errorf("tip_cents = %d, want %d", got.TipCents, want.TipCents)
+	}
+	if got.ServiceCharge != want.ServiceCharge {
+		t.Errorf("service_charge = %+v, want %+v", got.ServiceCharge, want.ServiceCharge)
 	}
 	if len(got.Items) != len(want.Items) {
 		t.Fatalf("items len = %d, want %d", len(got.Items), len(want.Items))
@@ -149,6 +153,57 @@ func TestParseReceiptJSONCurrency(t *testing.T) {
 			}
 			if got.Currency != tt.want {
 				t.Errorf("currency = %q, want %q", got.Currency, tt.want)
+			}
+		})
+	}
+}
+
+// TestParseReceiptJSONServiceCharge verifies service charges are read and
+// normalized: a valid percent or fixed charge is kept, anything else (an
+// unknown kind, a non-positive amount, or an omitted field) becomes "none".
+func TestParseReceiptJSONServiceCharge(t *testing.T) {
+	tests := []struct {
+		name string
+		sc   string // value of the "service_charge" field, or "" to omit it
+		want ParsedServiceCharge
+	}{
+		{
+			name: "percent charge",
+			sc:   `"service_charge":{"kind":"percent","percent":12.5},`,
+			want: ParsedServiceCharge{Kind: "percent", Percent: 12.5},
+		},
+		{
+			name: "fixed charge",
+			sc:   `"service_charge":{"kind":"fixed","amount_cents":500},`,
+			want: ParsedServiceCharge{Kind: "fixed", AmountCents: 500},
+		},
+		{
+			name: "omitted defaults to none",
+			sc:   "",
+			want: ParsedServiceCharge{Kind: "none"},
+		},
+		{
+			name: "zero percent degrades to none",
+			sc:   `"service_charge":{"kind":"percent","percent":0},`,
+			want: ParsedServiceCharge{Kind: "none"},
+		},
+		{
+			name: "unknown kind degrades to none",
+			sc:   `"service_charge":{"kind":"tip"},`,
+			want: ParsedServiceCharge{Kind: "none"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := `{"restaurant":"S",` + tt.sc +
+				`"items":[{"name":"X","price_cents":100,"qty":1}],` +
+				`"tax_cents":0,"tip_cents":0}`
+			got, err := parseReceiptJSON(input)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.ServiceCharge != tt.want {
+				t.Errorf("service_charge = %+v, want %+v", got.ServiceCharge, tt.want)
 			}
 		})
 	}

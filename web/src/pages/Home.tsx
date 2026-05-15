@@ -5,10 +5,18 @@ import { useAuth } from "../auth";
 import { formatMoney } from "../money";
 import { Avatar, Brand, Icon, PaperApp } from "../ui";
 
+// billTotal is the bill's full amount for the list summary: items, tax,
+// tip and the service charge (percent prorates the item subtotal, fixed is
+// a flat amount, none adds nothing).
 function billTotal(b: Bill): number {
-  return (
-    b.items.reduce((s, it) => s + it.price_cents, 0) + b.tax_cents + b.tip_cents
-  );
+  const subtotal = b.items.reduce((s, it) => s + it.price_cents, 0);
+  const service =
+    b.service_charge_kind === "percent"
+      ? Math.round((b.service_charge_rate_bps * subtotal) / 10000)
+      : b.service_charge_kind === "fixed"
+        ? b.service_charge_cents
+        : 0;
+  return subtotal + b.tax_cents + b.tip_cents + service;
 }
 
 function formatDate(createdAt: number): string {

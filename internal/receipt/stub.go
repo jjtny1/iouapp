@@ -16,7 +16,8 @@ func (StubParser) Parse(_ context.Context, _ []byte, _ string) (ParsedReceipt, e
 			{Name: "Fries", PriceCents: 595, Qty: 1},
 			{Name: "Iced Tea", PriceCents: 350, Qty: 3},
 		},
-		TaxCents: 412,
-		TipCents: 900,
+		TaxCents:      412,
+		TipCents:      900,
+		ServiceCharge: ParsedServiceCharge{Kind: "percent", Percent: 10},
 	}, nil
 }

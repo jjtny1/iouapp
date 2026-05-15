@@ -269,6 +269,11 @@ export default function FriendSplit() {
   const fmt = (c: number) => formatMoney(c, bill.currency);
   const nameOf = (pid: string) =>
     summary.participants.find((p) => p.id === pid)?.display_name ?? "?";
+  const serviceTotal = summary.split.service_charge_cents;
+  const serviceDiners =
+    bill.service_charge_headcount > 0
+      ? bill.service_charge_headcount
+      : summary.participants.length;
 
   /* ── Paid ────────────────────────────────────────────────────────── */
   if (isPaid) {
@@ -320,6 +325,16 @@ export default function FriendSplit() {
                   {fmt((myShare?.tax_cents ?? 0) + (myShare?.tip_cents ?? 0))}
                 </span>
               </div>
+              {(myShare?.service_cents ?? 0) > 0 && (
+                <div className="row row-between mt-2">
+                  <span className="mono muted" style={{ fontSize: 11 }}>
+                    Service
+                  </span>
+                  <span className="mono" style={{ fontSize: 13 }}>
+                    {fmt(myShare?.service_cents ?? 0)}
+                  </span>
+                </div>
+              )}
               <hr className="dash" style={{ margin: "10px 0" }} />
               <div className="row row-between">
                 <span
@@ -394,6 +409,24 @@ export default function FriendSplit() {
           <p className="body danger mt-3" style={{ fontSize: 13 }}>
             {error}
           </p>
+        )}
+
+        {serviceTotal > 0 && (
+          <div className="card mt-3">
+            <p className="eyebrow">Service charge</p>
+            <p className="body muted mt-2" style={{ fontSize: 12 }}>
+              This tab adds a{" "}
+              {bill.service_charge_kind === "percent"
+                ? `${bill.service_charge_rate_bps / 100}% `
+                : ""}
+              service charge of {fmt(serviceTotal)} — not an item you claim.{" "}
+              {bill.service_charge_kind === "percent"
+                ? "It's split across what each person ordered."
+                : `Split evenly between ${serviceDiners} diner${
+                    serviceDiners === 1 ? "" : "s"
+                  }.`}
+            </p>
+          </div>
         )}
 
         <div className="col mt-4">
@@ -519,6 +552,16 @@ export default function FriendSplit() {
                   {fmt((myShare?.tax_cents ?? 0) + (myShare?.tip_cents ?? 0))}
                 </span>
               </div>
+              {(myShare?.service_cents ?? 0) > 0 && (
+                <div className="row row-between mt-2">
+                  <span className="body muted" style={{ fontSize: 13 }}>
+                    Service charge
+                  </span>
+                  <span className="mono" style={{ fontSize: 13 }}>
+                    {fmt(myShare?.service_cents ?? 0)}
+                  </span>
+                </div>
+              )}
               <hr className="dash" style={{ margin: "10px 0" }} />
               <div className="row row-between">
                 <span
