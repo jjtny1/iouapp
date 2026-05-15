@@ -11,8 +11,12 @@ type ParsedItem struct {
 }
 
 // ParsedReceipt is the structured result of parsing a receipt image.
+//
+// Currency is the ISO 4217 code of the amounts on the receipt. All *Cents
+// fields are hundredths of that currency's major unit (e.g. ¥4100 -> 410000).
 type ParsedReceipt struct {
 	Restaurant string       `json:"restaurant"`
+	Currency   string       `json:"currency"`
 	Items      []ParsedItem `json:"items"`
 	TaxCents   int          `json:"tax_cents"`
 	TipCents   int          `json:"tip_cents"`

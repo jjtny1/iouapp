@@ -38,6 +38,34 @@ without it the app falls back to `receipt.StubParser` (a fixed sample receipt).
 
 ---
 
+## End-to-End Testing
+
+The Go server also serves the built SPA, so for a full manual test build the
+frontend (`cd web && npm run build`) and hit the Go server directly — no Vite
+proxy needed. Run on a non-default port if other agents may be using `:8080`:
+
+```bash
+SPLITIT_DEV=1 PORT=8099 SPLITIT_BASE_URL=http://localhost:8099 \
+  SPLITIT_DB=/tmp/splitit-test.db ANTHROPIC_API_KEY=sk-ant-... \
+  go run ./cmd/server
+```
+
+- **Magic-link sign-in via API.** `POST /api/auth/request {"email":...}` returns
+  the dev link in its JSON (`SPLITIT_DEV=1`). Extract the `token` from it and
+  `POST /api/auth/verify {"token":...}` with a curl cookie jar (`-c`/`-b`) to
+  get a session. The browser SignIn page shows the same dev link on screen.
+- **Receipt upload can't be driven through the browser.** The Chrome extension
+  blocks programmatic file uploads (`file_upload` → `Not allowed`), so test the
+  upload via the API: convert the HEIC first
+  (`sips -s format jpeg -Z 1600 in.heic --out out.jpg` on macOS — mirrors what
+  `prepareReceiptImage` does client-side), then
+  `curl -b cookies -F 'receipt=@out.jpg;type=image/jpeg' /api/bills/{id}/receipt`.
+  The browser is still fine for verifying _rendered_ pages.
+- The receipt endpoint authorizes by host user id, so a fresh API login as the
+  same email can upload to a bill a browser session created.
+
+---
+
 ## Mistakes to Avoid
 
 - **Don't use `heic2any` for HEIC conversion.** Its bundled libheif is outdated
@@ -71,5 +99,16 @@ without it the app falls back to `receipt.StubParser` (a fixed sample receipt).
   active for v1; real x402/USDC settlement is the planned next step.
 - **Money is integer cents end to end.** Tax/tip are prorated with the
   largest-remainder method so totals reconcile to the exact cent.
+- **Bills carry a currency.** Each bill has an ISO 4217 `currency` (default
+  `USD`). The receipt parser detects it from the image; the host can override
+  it in the editor. `*_cents` values are always hundredths of that currency's
+  major unit, for _every_ currency (¥4100 → `410000`) — the frontend's
+  `formatMoney` (`web/src/money.ts`) uses `Intl.NumberFormat` to render the
+  right symbol and fraction digits. Currency-code validation lives in
+  `internal/money` (`NormalizeCurrency`).
+- **Payment settlement currency is separate from the bill currency.** Payments
+  settle in `payment.Currency` (`USDC`); the `payments.currency` column is the
+  settlement coin, not the bill's. FX conversion from a non-USD bill currency
+  to the settlement currency is intentionally deferred to the x402 work.
 - **Auth is magic-link.** In `SPLITIT_DEV=1` the link is returned in the JSON
   response; otherwise it's only logged server-side (no email delivery yet).

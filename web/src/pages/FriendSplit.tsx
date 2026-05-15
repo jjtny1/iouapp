@@ -6,10 +6,7 @@ import {
   type BillSummary,
   type PaymentChallenge,
 } from "../api";
-
-function dollars(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
-}
+import { formatMoney } from "../money";
 
 function tokenKey(billId: string): string {
   return `splitit:participant:${billId}`;
@@ -213,6 +210,7 @@ export default function FriendSplit() {
   const isPaid = myParticipant?.payment_status === "paid";
   const paidTxRef = txRef ?? myParticipant?.tx_ref ?? null;
   const owesAmount = mine?.total_cents ?? 0;
+  const fmt = (cents: number) => formatMoney(cents, bill.currency);
 
   return (
     <main className="app">
@@ -241,12 +239,12 @@ export default function FriendSplit() {
                   {it.qty > 1 ? ` ×${it.qty}` : ""}
                 </span>
                 <span className="claim-price">
-                  {dollars(total)}
+                  {fmt(total)}
                   {claimers.length > 0 && (
                     <em>
                       {" "}
                       ({claimers.length} sharing ·{" "}
-                      {dollars(Math.floor(total / claimers.length))} ea)
+                      {fmt(Math.floor(total / claimers.length))} ea)
                     </em>
                   )}
                 </span>
@@ -260,13 +258,13 @@ export default function FriendSplit() {
         <h2>Your share</h2>
         {mine ? (
           <p className="status">
-            Items: {dollars(mine.item_subtotal_cents)}
+            Items: {fmt(mine.item_subtotal_cents)}
             <br />
-            Tax: {dollars(mine.tax_cents)}
+            Tax: {fmt(mine.tax_cents)}
             <br />
-            Tip: {dollars(mine.tip_cents)}
+            Tip: {fmt(mine.tip_cents)}
             <br />
-            <strong>Total: {dollars(mine.total_cents)}</strong>
+            <strong>Total: {fmt(mine.total_cents)}</strong>
           </p>
         ) : (
           <p className="status">Claim items to see your total.</p>
@@ -290,7 +288,7 @@ export default function FriendSplit() {
               Simulated payment — no real funds will move.
             </p>
             <p className="status">
-              Amount: {dollars(challenge.amount_cents)} {challenge.currency}
+              Amount: {formatMoney(challenge.amount_cents, challenge.currency)}
               <br />
               Network: {challenge.network}
               <br />
@@ -302,7 +300,7 @@ export default function FriendSplit() {
           </div>
         ) : owesAmount > 0 ? (
           <button onClick={startPayment} disabled={paying}>
-            {paying ? "Starting…" : `Pay ${dollars(owesAmount)} USDC`}
+            {paying ? "Starting…" : `Pay ${fmt(owesAmount)}`}
           </button>
         ) : (
           <button disabled title="Claim items first">

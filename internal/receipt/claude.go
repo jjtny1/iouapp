@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/jjtny1/splitit/internal/money"
 )
 
 const (
@@ -20,11 +22,16 @@ const (
 
 const parsePrompt = `Extract the restaurant bill from this receipt image. ` +
 	`Identify the restaurant name, every line item with its name, price, and quantity, ` +
-	`the tax, and the tip. Express all monetary amounts as integer cents (e.g. $13.95 -> 1395). ` +
+	`the tax, and the tip. Also identify the currency as a 3-letter ISO 4217 code ` +
+	`(e.g. USD, EUR, PLN, JPY) inferred from currency symbols or text on the receipt; ` +
+	`if you cannot tell, use "USD". ` +
+	`Express all monetary amounts as integer cents — hundredths of the currency's ` +
+	`major unit, regardless of currency (e.g. $13.95 -> 1395, ¥4100 -> 410000). ` +
 	`If a value is missing use 0 or an empty string. ` +
 	`Respond with ONLY a single JSON object and no prose, code fences, or explanation, ` +
 	`matching exactly this shape: ` +
-	`{"restaurant":string,"items":[{"name":string,"price_cents":integer,"qty":integer}],` +
+	`{"restaurant":string,"currency":string,` +
+	`"items":[{"name":string,"price_cents":integer,"qty":integer}],` +
 	`"tax_cents":integer,"tip_cents":integer}`
 
 // ClaudeParser parses receipts using the Anthropic Messages API.
@@ -145,5 +152,6 @@ func parseReceiptJSON(text string) (ParsedReceipt, error) {
 			r.Items[i].Qty = 1
 		}
 	}
+	r.Currency = money.CurrencyOrDefault(r.Currency)
 	return r, nil
 }

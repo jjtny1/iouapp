@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api, type Bill, type BillSummary } from "../api";
 import { useAuth } from "../auth";
 import { prepareReceiptImage } from "../image";
+import { formatMoney } from "../money";
 
 interface DraftItem {
   name: string;
@@ -30,6 +31,7 @@ export default function BillEditor() {
   const [copied, setCopied] = useState(false);
 
   const [restaurant, setRestaurant] = useState("");
+  const [currency, setCurrency] = useState("USD");
   const [items, setItems] = useState<DraftItem[]>([]);
   const [taxDollars, setTaxDollars] = useState("0.00");
   const [tipDollars, setTipDollars] = useState("0.00");
@@ -38,6 +40,7 @@ export default function BillEditor() {
   function loadFromBill(b: Bill) {
     setBill(b);
     setRestaurant(b.restaurant);
+    setCurrency(b.currency);
     setTaxDollars(centsToDollars(b.tax_cents));
     setTipDollars(centsToDollars(b.tip_cents));
     setItems(
@@ -92,6 +95,7 @@ export default function BillEditor() {
     try {
       const updated = await api.updateBill(id, {
         restaurant,
+        currency,
         tax_cents: dollarsToCents(taxDollars),
         tip_cents: dollarsToCents(tipDollars),
         items: items.map((it) => ({
@@ -201,6 +205,18 @@ export default function BillEditor() {
             onChange={(e) => setRestaurant(e.target.value)}
           />
 
+          <label htmlFor="currency">Currency (ISO 4217 code)</label>
+          <input
+            id="currency"
+            type="text"
+            maxLength={3}
+            placeholder="USD"
+            value={currency}
+            onChange={(e) =>
+              setCurrency(e.target.value.toUpperCase().replace(/[^A-Z]/g, ""))
+            }
+          />
+
           <h2>Items</h2>
           {items.map((it, i) => (
             <div className="item-row" key={i}>
@@ -237,7 +253,7 @@ export default function BillEditor() {
           ))}
           <button onClick={addItem}>Add item</button>
 
-          <label htmlFor="tax">Tax ($)</label>
+          <label htmlFor="tax">Tax ({currency})</label>
           <input
             id="tax"
             type="number"
@@ -247,7 +263,7 @@ export default function BillEditor() {
             onChange={(e) => setTaxDollars(e.target.value)}
           />
 
-          <label htmlFor="tip">Tip ($)</label>
+          <label htmlFor="tip">Tip ({currency})</label>
           <input
             id="tip"
             type="number"
@@ -258,9 +274,9 @@ export default function BillEditor() {
           />
 
           <p className="status">
-            Subtotal: ${centsToDollars(subtotalCents)}
+            Subtotal: {formatMoney(subtotalCents, currency)}
             <br />
-            Total: ${centsToDollars(totalCents)}
+            Total: {formatMoney(totalCents, currency)}
           </p>
 
           <button onClick={onSave} disabled={saving}>
@@ -285,7 +301,8 @@ export default function BillEditor() {
               );
               return (
                 <li key={p.id}>
-                  {p.display_name} — ${centsToDollars(share?.total_cents ?? 0)}
+                  {p.display_name} —{" "}
+                  {formatMoney(share?.total_cents ?? 0, currency)}
                   {p.payment_status === "paid" ? (
                     <span className="status">
                       {" · Paid ✓"}
@@ -300,11 +317,12 @@ export default function BillEditor() {
           </ul>
           {summary.split.unclaimed_cents > 0 && (
             <p className="status">
-              Unclaimed: ${centsToDollars(summary.split.unclaimed_cents)}
+              Unclaimed: {formatMoney(summary.split.unclaimed_cents, currency)}
             </p>
           )}
           <p className="status">
-            Grand total: ${centsToDollars(summary.split.grand_total_cents)}
+            Grand total:{" "}
+            {formatMoney(summary.split.grand_total_cents, currency)}
           </p>
         </section>
       )}
