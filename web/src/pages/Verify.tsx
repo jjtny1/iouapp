@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { Brand, PaperApp } from "../ui";
 
 export default function Verify() {
   const [params] = useSearchParams();
@@ -9,16 +10,12 @@ export default function Verify() {
   const { setUser } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const ran = useRef(false);
+  const token = params.get("token");
 
   useEffect(() => {
-    if (ran.current) return;
+    if (ran.current || !token) return;
     ran.current = true;
 
-    const token = params.get("token");
-    if (!token) {
-      setError("Missing token.");
-      return;
-    }
     api
       .verify(token)
       .then((user) => {
@@ -28,12 +25,23 @@ export default function Verify() {
       .catch((err) => {
         setError(err instanceof Error ? err.message : "verification failed");
       });
-  }, [params, navigate, setUser]);
+  }, [token, navigate, setUser]);
+
+  const message = !token ? "Missing token." : error;
 
   return (
-    <main className="app">
-      <h1>IOU</h1>
-      {error ? <p className="error">{error}</p> : <p>Signing you in…</p>}
-    </main>
+    <PaperApp>
+      <div
+        className="page-center"
+        style={{ alignItems: "center", justifyContent: "center" }}
+      >
+        <Brand size={64} />
+        {message ? (
+          <p className="body danger mt-6 center">{message}</p>
+        ) : (
+          <p className="eyebrow mt-6">Signing you in…</p>
+        )}
+      </div>
+    </PaperApp>
   );
 }
