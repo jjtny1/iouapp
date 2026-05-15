@@ -1,0 +1,11 @@
+# Local Terraform state and working files — never commit these.
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+
+# Per-deployment variable values. Copy terraform.tfvars.example instead.
+terraform.tfvars
+
+# The provider lock file IS committed (see !.terraform.lock.hcl below).
+!.terraform.lock.hcl
