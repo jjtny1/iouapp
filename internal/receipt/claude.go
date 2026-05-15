@@ -22,18 +22,48 @@ const (
 
 const parsePrompt = `Extract the restaurant bill from this receipt image. ` +
 	`Identify the restaurant name, every line item with its name, per-unit price, and quantity, ` +
-	`the tax, and the tip. The price is the price of a single unit, not the line total. ` +
+	`and the tip. The price is the price of a single unit, not the line total. ` +
+	`Use the prices printed on the receipt (which already include any tax baked into them). ` +
 	`Also identify the currency as a 3-letter ISO 4217 code ` +
 	`(e.g. USD, EUR, PLN, JPY) inferred from currency symbols or text on the receipt; ` +
 	`if you cannot tell, use "USD". ` +
+	`For tax_cents, report ONLY tax that is ADDED ON TOP of the listed item prices, ` +
+	`such as US-style sales tax. Many receipts — especially European VAT receipts — ` +
+	`instead print tax that is ALREADY INCLUDED in the item prices (often broken out ` +
+	`into several rate lines such as "VAT 23%" and "VAT 8%" for information only); ` +
+	`there the item prices, tip and service charge by themselves already sum to the ` +
+	`grand total, so set tax_cents to 0 — do NOT add included VAT again. ` +
+	`When tax is genuinely added on top, sum every added tax line into tax_cents. ` +
+	`Identify any mandatory service charge (a "service charge", "service", "servis", ` +
+	`"gratuity", or "coperto" line) — this is separate from a voluntary tip. ` +
+	`If the receipt shows it as a percentage, set service_charge.kind to "percent" and ` +
+	`service_charge.percent to that rate as a number (e.g. 12.5 for "12.5%"). ` +
+	`If it is a flat amount, set service_charge.kind to "fixed" and ` +
+	`service_charge.amount_cents to that amount. ` +
+	`If there is no service charge, set service_charge.kind to "none". ` +
+	`Read grand_total_cents: the final total, amount due, balance, or payment ` +
+	`line printed on the receipt — the exact amount the customer paid. ` +
 	`Express all monetary amounts as integer cents — hundredths of the currency's ` +
 	`major unit, regardless of currency (e.g. $13.95 -> 1395, ¥4100 -> 410000). ` +
 	`If a value is missing use 0 or an empty string. ` +
+	`*** CRITICAL — THIS RECONCILIATION STEP IS MANDATORY AND OVERRIDES EVERY ` +
+	`OTHER INSTRUCTION. *** Before you respond you MUST verify that the sum of ` +
+	`every item line total (per-unit price times quantity) plus tax_cents plus ` +
+	`tip_cents plus the service charge amount EQUALS grand_total_cents EXACTLY. ` +
+	`If they are not equal your answer is WRONG — you must fix it before ` +
+	`responding. The usual cause is tax: VAT printed on a receipt is almost ` +
+	`always already included in the item prices, so set tax_cents to 0 and the ` +
+	`bill reconciles; also recheck the item prices, quantities, tip and service ` +
+	`charge. Repeat the check until the parts add up to grand_total_cents to the ` +
+	`exact cent. NEVER return a result whose parts do not sum exactly to ` +
+	`grand_total_cents — the amounts must match. ` +
 	`Respond with ONLY a single JSON object and no prose, code fences, or explanation, ` +
 	`matching exactly this shape: ` +
 	`{"restaurant":string,"currency":string,` +
 	`"items":[{"name":string,"price_cents":integer,"qty":integer}],` +
-	`"tax_cents":integer,"tip_cents":integer}`
+	`"tax_cents":integer,"tip_cents":integer,` +
+	`"service_charge":{"kind":"none"|"percent"|"fixed","percent":number,"amount_cents":integer},` +
+	`"grand_total_cents":integer}`
 
 // ClaudeParser parses receipts using the Anthropic Messages API.
 type ClaudeParser struct {
@@ -154,5 +184,26 @@ func parseReceiptJSON(text string) (ParsedReceipt, error) {
 		}
 	}
 	r.Currency = money.CurrencyOrDefault(r.Currency)
+	r.ServiceCharge = normalizeServiceCharge(r.ServiceCharge)
+	r = reconcile(r)
 	return r, nil
+}
+
+// normalizeServiceCharge clamps a parsed service charge to a known kind with
+// non-negative amounts; anything unrecognized degrades to "none".
+func normalizeServiceCharge(sc ParsedServiceCharge) ParsedServiceCharge {
+	switch sc.Kind {
+	case "percent":
+		if sc.Percent <= 0 {
+			return ParsedServiceCharge{Kind: "none"}
+		}
+		return ParsedServiceCharge{Kind: "percent", Percent: sc.Percent}
+	case "fixed":
+		if sc.AmountCents <= 0 {
+			return ParsedServiceCharge{Kind: "none"}
+		}
+		return ParsedServiceCharge{Kind: "fixed", AmountCents: sc.AmountCents}
+	default:
+		return ParsedServiceCharge{Kind: "none"}
+	}
 }

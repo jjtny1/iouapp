@@ -25,16 +25,24 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 -- Phase 2: bill creation and receipt parsing.
+-- A service charge is a mandatory restaurant fee, separate from tip. Its
+-- kind controls how it splits: 'percent' prorates over item subtotals (like
+-- tax), 'fixed' splits evenly across service_charge_headcount diners. See the
+-- service_charge_* columns; 'none' means there is no service charge.
 CREATE TABLE IF NOT EXISTS bills (
-    id           TEXT PRIMARY KEY,
-    host_user_id TEXT NOT NULL REFERENCES users(id),
-    restaurant   TEXT,
-    currency     TEXT NOT NULL DEFAULT 'USD',
-    tax_cents    INTEGER NOT NULL DEFAULT 0,
-    tip_cents    INTEGER NOT NULL DEFAULT 0,
-    status       TEXT NOT NULL DEFAULT 'draft',
-    friend_token TEXT NOT NULL UNIQUE,
-    created_at   INTEGER NOT NULL
+    id                       TEXT PRIMARY KEY,
+    host_user_id             TEXT NOT NULL REFERENCES users(id),
+    restaurant               TEXT,
+    currency                 TEXT NOT NULL DEFAULT 'USD',
+    tax_cents                INTEGER NOT NULL DEFAULT 0,
+    tip_cents                INTEGER NOT NULL DEFAULT 0,
+    service_charge_kind      TEXT NOT NULL DEFAULT 'none',
+    service_charge_rate_bps  INTEGER NOT NULL DEFAULT 0,
+    service_charge_cents     INTEGER NOT NULL DEFAULT 0,
+    service_charge_headcount INTEGER NOT NULL DEFAULT 0,
+    status                   TEXT NOT NULL DEFAULT 'draft',
+    friend_token             TEXT NOT NULL UNIQUE,
+    created_at               INTEGER NOT NULL
 );
 
 -- Each row is one claimable unit; multi-quantity receipt lines are expanded

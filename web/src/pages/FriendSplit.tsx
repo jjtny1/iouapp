@@ -211,6 +211,11 @@ export default function FriendSplit() {
   const paidTxRef = txRef ?? myParticipant?.tx_ref ?? null;
   const owesAmount = mine?.total_cents ?? 0;
   const fmt = (cents: number) => formatMoney(cents, bill.currency);
+  const serviceTotal = summary.split.service_charge_cents;
+  const serviceDiners =
+    bill.service_charge_headcount > 0
+      ? bill.service_charge_headcount
+      : summary.participants.length;
 
   return (
     <main className="app">
@@ -251,16 +256,48 @@ export default function FriendSplit() {
         })}
       </ul>
 
+      {serviceTotal > 0 && (
+        <section className="my-share">
+          <h2>Service charge</h2>
+          <p className="status">
+            This bill has a{" "}
+            {bill.service_charge_kind === "percent"
+              ? `${bill.service_charge_rate_bps / 100}% `
+              : ""}
+            service charge of {fmt(serviceTotal)}. It is not an item you claim —{" "}
+            {bill.service_charge_kind === "percent"
+              ? "it is split in proportion to what each person ordered."
+              : `it is split evenly between ${serviceDiners} diner${
+                  serviceDiners === 1 ? "" : "s"
+                }.`}
+          </p>
+        </section>
+      )}
+
       <section className="my-share">
         <h2>Your share</h2>
         {mine ? (
           <p className="status">
             Items: {fmt(mine.item_subtotal_cents)}
             <br />
-            Tax: {fmt(mine.tax_cents)}
-            <br />
-            Tip: {fmt(mine.tip_cents)}
-            <br />
+            {bill.tax_cents > 0 && (
+              <>
+                Tax: {fmt(mine.tax_cents)}
+                <br />
+              </>
+            )}
+            {bill.tip_cents > 0 && (
+              <>
+                Tip: {fmt(mine.tip_cents)}
+                <br />
+              </>
+            )}
+            {serviceTotal > 0 && (
+              <>
+                Service charge: {fmt(mine.service_cents)}
+                <br />
+              </>
+            )}
             <strong>Total: {fmt(mine.total_cents)}</strong>
           </p>
         ) : (

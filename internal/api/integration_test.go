@@ -215,6 +215,13 @@ func TestHappyPathHostFlow(t *testing.T) {
 	if afterUpload["currency"] != "USD" {
 		t.Errorf("currency = %v, want USD", afterUpload["currency"])
 	}
+	// The StubParser receipt carries a 10% percent service charge.
+	if afterUpload["service_charge_kind"] != "percent" {
+		t.Errorf("service_charge_kind = %v, want percent", afterUpload["service_charge_kind"])
+	}
+	if bps, _ := afterUpload["service_charge_rate_bps"].(float64); bps != 1000 {
+		t.Errorf("service_charge_rate_bps = %v, want 1000", afterUpload["service_charge_rate_bps"])
+	}
 
 	// GET the bill as host: full detail with host-only fields.
 	var detail map[string]any
@@ -296,8 +303,9 @@ func TestFriendFlowAndSummaryInvariant(t *testing.T) {
 			Participants []struct {
 				TotalCents int `json:"total_cents"`
 			} `json:"participants"`
-			UnclaimedCents  int `json:"unclaimed_cents"`
-			GrandTotalCents int `json:"grand_total_cents"`
+			UnclaimedCents     int `json:"unclaimed_cents"`
+			ServiceChargeCents int `json:"service_charge_cents"`
+			GrandTotalCents    int `json:"grand_total_cents"`
 		} `json:"split"`
 	}
 	e.doJSON(e.newClient(), http.MethodGet,
@@ -307,7 +315,12 @@ func TestFriendFlowAndSummaryInvariant(t *testing.T) {
 	for _, p := range summary.Split.Participants {
 		sumParticipants += p.TotalCents
 	}
-	wantGrand := itemTotal + taxCents + tipCents
+	// The StubParser receipt carries a 10% percent service charge, so the
+	// reconciliation must include it alongside items, tax and tip.
+	if summary.Split.ServiceChargeCents <= 0 {
+		t.Errorf("service_charge_cents = %d, want > 0", summary.Split.ServiceChargeCents)
+	}
+	wantGrand := itemTotal + taxCents + tipCents + summary.Split.ServiceChargeCents
 	if got := sumParticipants + summary.Split.UnclaimedCents; got != wantGrand {
 		t.Errorf("invariant broken: sum(participant totals)=%d + unclaimed=%d = %d, want %d",
 			sumParticipants, summary.Split.UnclaimedCents, got, wantGrand)
@@ -418,6 +431,57 @@ func TestUpdateBillCurrency(t *testing.T) {
 	e.doJSON(host, http.MethodPatch, "/api/bills/"+billID, map[string]any{
 		"restaurant": "Bar Mleczny", "currency": "zloty",
 		"tax_cents": 0, "tip_cents": 0,
+	}, http.StatusBadRequest, nil)
+}
+
+func TestUpdateBillServiceCharge(t *testing.T) {
+	e := newTestEnv(t)
+	host := e.signIn("host@example.com")
+	bill := e.createBill(host)
+	billID := bill["id"].(string)
+	if bill["service_charge_kind"] != "none" {
+		t.Errorf("new bill service_charge_kind = %v, want none", bill["service_charge_kind"])
+	}
+
+	// Host sets a 12.5% percent service charge.
+	var updated map[string]any
+	e.doJSON(host, http.MethodPatch, "/api/bills/"+billID, map[string]any{
+		"restaurant": "Gaia", "tax_cents": 0, "tip_cents": 0,
+		"service_charge_kind": "percent", "service_charge_rate_bps": 1250,
+	}, http.StatusOK, &updated)
+	if updated["service_charge_kind"] != "percent" {
+		t.Errorf("service_charge_kind = %v, want percent", updated["service_charge_kind"])
+	}
+	if bps, _ := updated["service_charge_rate_bps"].(float64); bps != 1250 {
+		t.Errorf("service_charge_rate_bps = %v, want 1250", updated["service_charge_rate_bps"])
+	}
+
+	// Switching to a fixed charge with a headcount persists across a GET, and
+	// the percent-only rate field is cleared.
+	e.doJSON(host, http.MethodPatch, "/api/bills/"+billID, map[string]any{
+		"restaurant": "Gaia", "tax_cents": 0, "tip_cents": 0,
+		"service_charge_kind": "fixed", "service_charge_cents": 1200,
+		"service_charge_headcount": 4,
+	}, http.StatusOK, nil)
+	var reloaded map[string]any
+	e.doJSON(host, http.MethodGet, "/api/bills/"+billID, nil, http.StatusOK, &reloaded)
+	if reloaded["service_charge_kind"] != "fixed" {
+		t.Errorf("reloaded kind = %v, want fixed", reloaded["service_charge_kind"])
+	}
+	if c, _ := reloaded["service_charge_cents"].(float64); c != 1200 {
+		t.Errorf("reloaded cents = %v, want 1200", reloaded["service_charge_cents"])
+	}
+	if h, _ := reloaded["service_charge_headcount"].(float64); h != 4 {
+		t.Errorf("reloaded headcount = %v, want 4", reloaded["service_charge_headcount"])
+	}
+	if bps, _ := reloaded["service_charge_rate_bps"].(float64); bps != 0 {
+		t.Errorf("reloaded rate_bps = %v, want 0", reloaded["service_charge_rate_bps"])
+	}
+
+	// An unknown service charge kind is rejected.
+	e.doJSON(host, http.MethodPatch, "/api/bills/"+billID, map[string]any{
+		"restaurant": "Gaia", "tax_cents": 0, "tip_cents": 0,
+		"service_charge_kind": "gratuity",
 	}, http.StatusBadRequest, nil)
 }
 

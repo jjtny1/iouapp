@@ -256,7 +256,23 @@ func (s *Server) buildSummary(ctx context.Context, b bill) (map[string]any, erro
 			TotalCents: it.PriceCents,
 		})
 	}
-	summary := split.Compute(splitItems, b.TaxCents, b.TipCents, claims)
+	participantIDs := make([]string, 0, len(parts))
+	for _, p := range parts {
+		participantIDs = append(participantIDs, p.ID)
+	}
+	summary := split.Compute(split.Input{
+		Items:    splitItems,
+		TaxCents: b.TaxCents,
+		TipCents: b.TipCents,
+		Service: split.ServiceCharge{
+			Kind:       b.ServiceChargeKind,
+			RateBps:    b.ServiceChargeRateBps,
+			FixedCents: b.ServiceChargeCents,
+			Headcount:  b.ServiceChargeHeadcount,
+		},
+		Claims:         claims,
+		ParticipantIDs: participantIDs,
+	})
 
 	payments, err := s.loadPayments(ctx, b.ID)
 	if err != nil {
