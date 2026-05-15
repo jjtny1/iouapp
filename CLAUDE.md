@@ -83,6 +83,16 @@ IOU_DEV=1 PORT=8099 IOU_BASE_URL=http://localhost:8099 \
   Node 20, prefix commands with
   `export NVM_DIR="$HOME/.nvm"; source "$NVM_DIR/nvm.sh"; nvm use 20 >/dev/null 2>&1;`
 - **Don't commit straight to `main`.** Branch first, then open a PR.
+- **Don't rename the Go module path while other worktree branches are in
+  flight.** Renaming `module` in `go.mod` rewrites every
+  `import "github.com/jjtny1/splitit/..."` line repo-wide — it's all-or-nothing.
+  Worktrees are isolated on disk so it won't break a sibling branch's build
+  immediately, but at merge time it conflicts with every Go file another branch
+  touched, and once it lands on `main` any branch still on the old path stops
+  compiling. Do module-path renames as a standalone change when the repo is
+  quiet (no other open branches). Note the module path is a _logical_
+  identifier — it need not match the on-disk directory or the GitHub repo name,
+  so there's no functional pressure to rename it at all.
 - **Don't give items a `qty` field.** One `items` row is exactly one claimable
   unit; `price_cents` is that unit's full price. Multi-quantity receipt lines
   are expanded at parse time (see below), so nothing downstream multiplies by a
