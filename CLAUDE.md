@@ -83,6 +83,10 @@ SPLITIT_DEV=1 PORT=8099 SPLITIT_BASE_URL=http://localhost:8099 \
   Node 20, prefix commands with
   `export NVM_DIR="$HOME/.nvm"; source "$NVM_DIR/nvm.sh"; nvm use 20 >/dev/null 2>&1;`
 - **Don't commit straight to `main`.** Branch first, then open a PR.
+- **Don't give items a `qty` field.** One `items` row is exactly one claimable
+  unit; `price_cents` is that unit's full price. Multi-quantity receipt lines
+  are expanded at parse time (see below), so nothing downstream multiplies by a
+  quantity.
 
 ## Learned Patterns
 
@@ -110,5 +114,16 @@ SPLITIT_DEV=1 PORT=8099 SPLITIT_BASE_URL=http://localhost:8099 \
   settle in `payment.Currency` (`USDC`); the `payments.currency` column is the
   settlement coin, not the bill's. FX conversion from a non-USD bill currency
   to the settlement currency is intentionally deferred to the x402 work.
+- **One item row = one claimable unit.** A receipt line with quantity N>1 is
+  expanded at parse time by `receipt.Flatten` into N separate `qty=1` items
+  named `Name (1 of N)` … `(N of N)`, each at the per-unit price. This lets
+  each friend claim their own unit (e.g. two people each pick one of two
+  Cokes) instead of sharing a single multi-quantity checkbox. The `items`
+  table has no `qty` column.
 - **Auth is magic-link.** In `SPLITIT_DEV=1` the link is returned in the JSON
   response; otherwise it's only logged server-side (no email delivery yet).
+- **The verify page can race the auth bootstrap.** `AuthProvider`'s initial
+  `GET /api/auth/me` (run unauthenticated on first paint) can resolve _after_
+  `Verify` sets the user and clobber it back to `null`, bouncing to `/signin`.
+  A full page reload of `/` after the cookie is set re-authenticates cleanly.
+  Known issue, not yet fixed.
