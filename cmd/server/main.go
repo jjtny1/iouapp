@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jjtny1/splitit/internal/api"
+	"github.com/jjtny1/splitit/internal/auth"
 	"github.com/jjtny1/splitit/internal/config"
 	"github.com/jjtny1/splitit/internal/db"
 )
@@ -24,9 +25,14 @@ func main() {
 	}
 	defer database.Close()
 
+	mailer, err := auth.NewSender(context.Background(), cfg.MailProvider, cfg.MailFrom, cfg.AWSRegion)
+	if err != nil {
+		log.Fatalf("mailer: %v", err)
+	}
+
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           api.NewRouter(database, cfg),
+		Handler:           api.NewRouter(database, cfg, mailer),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

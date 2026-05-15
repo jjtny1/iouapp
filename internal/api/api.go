@@ -21,11 +21,11 @@ type Server struct {
 	Payment payment.Provider
 }
 
-func NewRouter(database *db.DB, cfg config.Config) http.Handler {
+func NewRouter(database *db.DB, cfg config.Config, mailer auth.EmailSender) http.Handler {
 	s := &Server{
 		DB:      database,
 		Cfg:     cfg,
-		Mailer:  auth.LogSender{},
+		Mailer:  mailer,
 		Parser:  receipt.New(cfg),
 		Payment: payment.NewProvider(cfg.PaymentProvider),
 	}
