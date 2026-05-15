@@ -368,6 +368,58 @@ func (s *Server) handleUpdateBill(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.billJSON(b, true))
 }
 
+func (s *Server) handleDeleteBill(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value(userCtxKey).(user)
+	id := r.PathValue("id")
+
+	b, err := s.loadBill(r.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "bill not found"})
+		return
+	}
+	if err != nil {
+		log.Printf("delete bill: load: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	if b.hostUserID != u.ID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
+
+	if err := s.deleteBill(r.Context(), id); err != nil {
+		log.Printf("delete bill: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteBill removes a bill and every row that references it — payments,
+// claims, participants and items — in a single transaction. The deletes run
+// child-table-first so a foreign key is never left dangling mid-transaction.
+func (s *Server) deleteBill(ctx context.Context, id string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`DELETE FROM payments WHERE bill_id = ?`,
+		`DELETE FROM claims WHERE participant_id IN (SELECT id FROM participants WHERE bill_id = ?)`,
+		`DELETE FROM participants WHERE bill_id = ?`,
+		`DELETE FROM items WHERE bill_id = ?`,
+		`DELETE FROM bills WHERE id = ?`,
+	}
+	for _, q := range stmts {
+		if _, err := tx.ExecContext(ctx, q, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // loadBill fetches a bill row by id without its items.
 func (s *Server) loadBill(ctx context.Context, id string) (bill, error) {
 	var b bill
