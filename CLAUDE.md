@@ -110,6 +110,15 @@ IOU_DEV=1 PORT=8231 IOU_BASE_URL=http://localhost:8231 \
   unit; `price_cents` is that unit's full price. Multi-quantity receipt lines
   are expanded at parse time (see below), so nothing downstream multiplies by a
   quantity.
+- **Don't build the production Docker image without `--platform linux/amd64`.**
+  Apple Silicon Macs build arm64 images by default, but the Fargate task runs
+  x86_64 — a native-arch image pushes fine, then the task dies on start with an
+  `exec format error`. Always `docker build --platform linux/amd64 …`.
+- **Don't let `terraform apply` create the ECS service before an image exists
+  in ECR — actually, it's fine.** `aws_ecs_service` does not wait for task
+  health unless `wait_for_steady_state = true` (it isn't set), so a single full
+  apply succeeds; the service just has no healthy task until you push an image
+  and `update-service --force-new-deployment`. No need to stage the apply.
 
 ## Learned Patterns
 
@@ -175,7 +184,21 @@ count)` shares — shares beyond the joined participants go to `unclaimed` so
   Cokes) instead of sharing a single multi-quantity checkbox. The `items`
   table has no `qty` column.
 - **Auth is magic-link.** In `IOU_DEV=1` the link is returned in the JSON
-  response; otherwise it's only logged server-side (no email delivery yet).
+  response. In prod it is emailed: `NewRouter` takes an `auth.EmailSender`,
+  chosen by `IOU_MAIL_PROVIDER` — a log-only sender by default, or `SESSender`
+  (`internal/auth/ses.go`) when set to `ses`, which sends via Amazon SES from
+  `IOU_MAIL_FROM` in `AWS_REGION`.
+- **The app is deployed to AWS ECS Fargate** — live at `https://iouapp.ai`.
+  `deploy/` holds a 3-stage `Dockerfile` and `deploy/terraform/` (the whole
+  stack: VPC, ALB + ACM HTTPS, ECS, ECR, EFS for the SQLite file, Route 53,
+  SES). Runbook and teardown: `deploy/README.md`. To ship a new version: build
+  `--platform linux/amd64`, push to ECR, then `aws ecs update-service
+--cluster iou-cluster --service iou-service --force-new-deployment`. The
+  `ANTHROPIC_API_KEY` lives in SSM Parameter Store as a `SecureString` (name
+  `/iou/ANTHROPIC_API_KEY`), injected into the container by ECS — never in
+  Terraform state or the task definition. `IOU_DEV` is never set in prod. SES
+  starts in sandbox mode (only verified recipient addresses receive mail);
+  request production access to email arbitrary users.
 - **The verify page can race the auth bootstrap.** `AuthProvider`'s initial
   `GET /api/auth/me` (run unauthenticated on first paint) can resolve _after_
   `Verify` sets the user and clobber it back to `null`, bouncing to `/signin`.

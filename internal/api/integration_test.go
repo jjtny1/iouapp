@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jjtny1/splitit/internal/auth"
 	"github.com/jjtny1/splitit/internal/config"
 	"github.com/jjtny1/splitit/internal/db"
 )
@@ -42,7 +43,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		AnthropicKey: "",
 		DevMode:      true,
 	}
-	srv := httptest.NewServer(NewRouter(database, cfg))
+	srv := httptest.NewServer(NewRouter(database, cfg, auth.LogSender{}))
 	t.Cleanup(srv.Close)
 	return &testEnv{t: t, server: srv, url: srv.URL}
 }
@@ -646,6 +647,90 @@ func TestPayments(t *testing.T) {
 	t.Run("a non-host cannot mark a payment", func(t *testing.T) {
 		e.doJSON(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/payments/"+partID,
 			map[string]bool{"paid": false}, http.StatusUnauthorized, nil)
+	})
+}
+
+func TestDeleteBill(t *testing.T) {
+	e := newTestEnv(t)
+	host := e.signIn("deleter@example.com")
+
+	bill := e.createBill(host)
+	billID := bill["id"].(string)
+	friendToken := bill["friend_token"].(string)
+	e.uploadReceipt(host, billID, http.StatusOK, nil)
+
+	// A friend joins, claims an item, and a payment is initiated, so the bill
+	// has rows in items, participants, claims and payments. The delete must
+	// cascade through all of them without violating a foreign key.
+	var friendBill map[string]any
+	e.doJSON(e.newClient(), http.MethodGet, "/api/by-token/"+friendToken,
+		nil, http.StatusOK, &friendBill)
+	firstItemID := friendBill["items"].([]any)[0].(map[string]any)["id"].(string)
+
+	var joinResp struct {
+		ParticipantToken string `json:"participant_token"`
+	}
+	e.doJSON(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/participants",
+		map[string]string{"display_name": "Dana", "t": friendToken},
+		http.StatusCreated, &joinResp)
+	e.doJSON(e.newClient(), http.MethodPut, "/api/bills/"+billID+"/claims",
+		map[string]any{"participant_token": joinResp.ParticipantToken,
+			"item_ids": []string{firstItemID}}, http.StatusOK, nil)
+
+	e.doJSON(host, http.MethodPatch, "/api/users/me",
+		map[string]string{"venmo_handle": "delete-test"}, http.StatusOK, nil)
+	// /pay returns the Venmo payment intent and inserts a payment row.
+	e.doJSON(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/pay",
+		map[string]string{"participant_token": joinResp.ParticipantToken},
+		http.StatusOK, nil)
+
+	t.Run("unauthenticated delete is 401", func(t *testing.T) {
+		resp, _ := e.do(e.newClient(), http.MethodDelete, "/api/bills/"+billID, nil, "")
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401", resp.StatusCode)
+		}
+	})
+
+	t.Run("delete by a different user is 403", func(t *testing.T) {
+		intruder := e.signIn("intruder@example.com")
+		resp, _ := e.do(intruder, http.MethodDelete, "/api/bills/"+billID, nil, "")
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("status = %d, want 403", resp.StatusCode)
+		}
+	})
+
+	t.Run("delete of an unknown bill is 404", func(t *testing.T) {
+		resp, _ := e.do(host, http.MethodDelete, "/api/bills/does-not-exist", nil, "")
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("status = %d, want 404", resp.StatusCode)
+		}
+	})
+
+	t.Run("host deletes the bill and every dependent row", func(t *testing.T) {
+		resp, raw := e.do(host, http.MethodDelete, "/api/bills/"+billID, nil, "")
+		if resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204; body=%s", resp.StatusCode, raw)
+		}
+
+		// The bill is gone: a host GET 404s and it leaves the host's list.
+		getResp, _ := e.do(host, http.MethodGet, "/api/bills/"+billID, nil, "")
+		if getResp.StatusCode != http.StatusNotFound {
+			t.Errorf("get after delete: status = %d, want 404", getResp.StatusCode)
+		}
+		var list []map[string]any
+		e.doJSON(host, http.MethodGet, "/api/bills", nil, http.StatusOK, &list)
+		for _, b := range list {
+			if b["id"] == billID {
+				t.Errorf("deleted bill %s still in the host's list", billID)
+			}
+		}
+	})
+
+	t.Run("deleting an already-deleted bill is 404", func(t *testing.T) {
+		resp, _ := e.do(host, http.MethodDelete, "/api/bills/"+billID, nil, "")
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("status = %d, want 404", resp.StatusCode)
+		}
 	})
 }
 

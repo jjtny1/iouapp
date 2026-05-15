@@ -8,6 +8,9 @@ type Config struct {
 	BaseURL      string
 	AnthropicKey string
 	DevMode      bool
+	MailProvider string
+	MailFrom     string
+	AWSRegion    string
 }
 
 func Load() Config {
@@ -17,6 +20,9 @@ func Load() Config {
 		BaseURL:      env("IOU_BASE_URL", "http://localhost:8080"),
 		AnthropicKey: os.Getenv("ANTHROPIC_API_KEY"),
 		DevMode:      boolEnv("IOU_DEV"),
+		MailProvider: env("IOU_MAIL_PROVIDER", "log"),
+		MailFrom:     os.Getenv("IOU_MAIL_FROM"),
+		AWSRegion:    os.Getenv("AWS_REGION"),
 	}
 }
 

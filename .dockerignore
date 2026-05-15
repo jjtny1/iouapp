@@ -1,0 +1,36 @@
+# Version control
+.git
+.gitignore
+
+# Dependencies / build artifacts (rebuilt inside the image)
+node_modules
+web/node_modules
+web/dist
+
+# Local databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Scratch / temp
+tmp/
+*.log
+
+# Agent + editor noise
+.claude
+.vscode
+.idea
+.DS_Store
+
+# Local environment / secrets — injected at runtime by ECS
+.env
+.env.*
+*.local
+
+# Deployment IaC — not needed in the build context
+deploy/
+
+# Docker files themselves
+Dockerfile
+.dockerignore

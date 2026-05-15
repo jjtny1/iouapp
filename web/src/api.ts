@@ -158,6 +158,20 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(update),
     }),
+  // deleteBill removes a tab the signed-in user hosts. The server replies
+  // 204 No Content, so there is no body to parse on success.
+  deleteBill: async (id: string): Promise<void> => {
+    const res = await fetch(`/api/bills/${id}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(
+        (body as { error?: string }).error ?? "could not delete tab",
+      );
+    }
+  },
   billByToken: (token: string) =>
     request<Bill>(`/api/by-token/${encodeURIComponent(token)}`),
   joinBill: (id: string, display_name: string, t: string) =>

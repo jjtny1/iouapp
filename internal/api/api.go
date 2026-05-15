@@ -19,11 +19,11 @@ type Server struct {
 	Parser receipt.Parser
 }
 
-func NewRouter(database *db.DB, cfg config.Config) http.Handler {
+func NewRouter(database *db.DB, cfg config.Config, mailer auth.EmailSender) http.Handler {
 	s := &Server{
 		DB:     database,
 		Cfg:    cfg,
-		Mailer: auth.LogSender{},
+		Mailer: mailer,
 		Parser: receipt.New(cfg),
 	}
 
@@ -39,6 +39,7 @@ func NewRouter(database *db.DB, cfg config.Config) http.Handler {
 	mux.HandleFunc("GET /api/bills/{id}", s.handleGetBill)
 	mux.HandleFunc("POST /api/bills/{id}/receipt", s.requireAuth(s.handleBillReceipt))
 	mux.HandleFunc("PATCH /api/bills/{id}", s.requireAuth(s.handleUpdateBill))
+	mux.HandleFunc("DELETE /api/bills/{id}", s.requireAuth(s.handleDeleteBill))
 	mux.HandleFunc("GET /api/by-token/{token}", s.handleBillByToken)
 	mux.HandleFunc("POST /api/bills/{id}/participants", s.handleJoinBill)
 	mux.HandleFunc("PUT /api/bills/{id}/claims", s.handleSetClaims)

@@ -37,6 +37,131 @@ function isSettled(b: Bill): boolean {
   return b.status.toLowerCase() === "settled";
 }
 
+// TabRow renders one saved tab on Home — an "card" for open tabs, a compact
+// "line" for settled ones. A dim trash handle reveals an inline confirm panel
+// that slides over the row; deletion runs only after the host confirms.
+function TabRow({
+  bill,
+  variant,
+  onOpen,
+  onDelete,
+}: {
+  bill: Bill;
+  variant: "card" | "line";
+  onOpen: () => void;
+  onDelete: () => Promise<void>;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  async function confirmDelete() {
+    setDeleting(true);
+    setFailed(false);
+    try {
+      await onDelete();
+      // On success the parent drops this row, unmounting the component.
+    } catch {
+      setFailed(true);
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div className={`tab tab-${variant}`}>
+      <button
+        className="tab-face"
+        onClick={onOpen}
+        tabIndex={confirming ? -1 : 0}
+      >
+        {variant === "card" ? (
+          <div
+            className="row row-between gap-3"
+            style={{ alignItems: "flex-start" }}
+          >
+            <div className="flex1">
+              <p className="h-card truncate">
+                {bill.restaurant || "Untitled tab"}
+              </p>
+              <p
+                className="mono"
+                style={{
+                  margin: "4px 0 0",
+                  fontSize: 11,
+                  color: "var(--muted)",
+                }}
+              >
+                {formatDate(bill.created_at)} · {bill.status}
+              </p>
+            </div>
+            <span
+              className="mono"
+              style={{ fontSize: 14, fontWeight: 600, flexShrink: 0 }}
+            >
+              {formatMoney(billTotal(bill), bill.currency)}
+            </span>
+          </div>
+        ) : (
+          <div className="row row-between">
+            <div>
+              <p style={{ margin: 0, fontSize: 14 }}>
+                {bill.restaurant || "Untitled tab"}
+              </p>
+              <p
+                className="mono muted"
+                style={{ margin: "2px 0 0", fontSize: 11 }}
+              >
+                {formatDate(bill.created_at)}
+              </p>
+            </div>
+            <span className="mono muted" style={{ fontSize: 13 }}>
+              {formatMoney(billTotal(bill), bill.currency)}
+            </span>
+          </div>
+        )}
+      </button>
+
+      <button
+        className="tab-del"
+        onClick={() => setConfirming(true)}
+        aria-label={`Delete ${bill.restaurant || "untitled tab"}`}
+        tabIndex={confirming ? -1 : 0}
+      >
+        <Icon.Trash size={16} />
+      </button>
+
+      {confirming && (
+        <div
+          className="tab-confirm"
+          role="alertdialog"
+          aria-label="Confirm delete"
+        >
+          <span className={`tab-confirm-msg${failed ? " is-error" : ""}`}>
+            {failed ? "Couldn't delete — retry?" : "Delete this tab?"}
+          </span>
+          <div className="tab-confirm-actions">
+            <button
+              className="tab-confirm-btn tab-confirm-keep"
+              onClick={() => setConfirming(false)}
+              disabled={deleting}
+            >
+              Keep
+            </button>
+            <button
+              className="tab-confirm-btn tab-confirm-del"
+              onClick={confirmDelete}
+              disabled={deleting}
+              autoFocus
+            >
+              {deleting ? "Deleting…" : "Delete"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Home() {
   const { user, setUser } = useAuth();
   const navigate = useNavigate();
@@ -88,6 +213,13 @@ export default function Home() {
     }
   }
 
+  // deleteBill removes a tab server-side, then drops it from the list. Any
+  // failure is rethrown so the row's confirm panel can surface a retry.
+  async function deleteBill(id: string) {
+    await api.deleteBill(id);
+    setBills((prev) => prev.filter((b) => b.id !== id));
+  }
+
   const open = bills.filter((b) => !isSettled(b));
   const settled = bills.filter(isSettled);
 
@@ -124,42 +256,13 @@ export default function Home() {
             </div>
             <div className="col gap-2">
               {open.map((b) => (
-                <button
+                <TabRow
                   key={b.id}
-                  className="tap-card"
-                  onClick={() => navigate(`/bills/${b.id}`)}
-                >
-                  <div
-                    className="row row-between gap-3"
-                    style={{ alignItems: "flex-start" }}
-                  >
-                    <div className="flex1">
-                      <p className="h-card truncate">
-                        {b.restaurant || "Untitled tab"}
-                      </p>
-                      <p
-                        className="mono"
-                        style={{
-                          margin: "4px 0 0",
-                          fontSize: 11,
-                          color: "var(--muted)",
-                        }}
-                      >
-                        {formatDate(b.created_at)} · {b.status}
-                      </p>
-                    </div>
-                    <span
-                      className="mono"
-                      style={{
-                        fontSize: 14,
-                        fontWeight: 600,
-                        flexShrink: 0,
-                      }}
-                    >
-                      {formatMoney(billTotal(b), b.currency)}
-                    </span>
-                  </div>
-                </button>
+                  bill={b}
+                  variant="card"
+                  onOpen={() => navigate(`/bills/${b.id}`)}
+                  onDelete={() => deleteBill(b.id)}
+                />
               ))}
             </div>
           </>
@@ -173,36 +276,13 @@ export default function Home() {
             </div>
             <div>
               {settled.map((b) => (
-                <button
+                <TabRow
                   key={b.id}
-                  className="bill-line"
-                  onClick={() => navigate(`/bills/${b.id}`)}
-                  style={{
-                    background: "transparent",
-                    border: 0,
-                    borderBottom: "1px dashed var(--line)",
-                    width: "100%",
-                    textAlign: "left",
-                    cursor: "pointer",
-                  }}
-                >
-                  <div className="row row-between">
-                    <div>
-                      <p style={{ margin: 0, fontSize: 14 }}>
-                        {b.restaurant || "Untitled tab"}
-                      </p>
-                      <p
-                        className="mono muted"
-                        style={{ margin: "2px 0 0", fontSize: 11 }}
-                      >
-                        {formatDate(b.created_at)}
-                      </p>
-                    </div>
-                    <span className="mono muted" style={{ fontSize: 13 }}>
-                      {formatMoney(billTotal(b), b.currency)}
-                    </span>
-                  </div>
-                </button>
+                  bill={b}
+                  variant="line"
+                  onOpen={() => navigate(`/bills/${b.id}`)}
+                  onDelete={() => deleteBill(b.id)}
+                />
               ))}
             </div>
           </>

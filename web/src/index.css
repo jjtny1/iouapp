@@ -484,6 +484,13 @@ a {
   font-variant-numeric: tabular-nums;
   margin: 0;
 }
+.totalbar .sub {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 253, 246, 0.55);
+  margin: 3px 0 0;
+}
 
 /* ─── Dropzone ──────────────────────────────────────────────────────── */
 .dropzone {

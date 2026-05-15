@@ -273,6 +273,22 @@ export default function FriendSplit() {
   const isPaid = myParticipant?.payment_status === "paid";
   const owes = myShare?.total_cents ?? 0;
   const fmt = (c: number) => formatMoney(c, bill.currency);
+  // The "you owe" total folds prorated tax, tip and service on top of the
+  // claimed items — spell each part out with its own amount so the number
+  // isn't a mystery.
+  const myItemCents = myShare?.item_subtotal_cents ?? 0;
+  const myTaxCents = myShare?.tax_cents ?? 0;
+  const myTipCents = myShare?.tip_cents ?? 0;
+  const myServiceCents = myShare?.service_cents ?? 0;
+  const extrasCents = myTaxCents + myTipCents + myServiceCents;
+  const owedBreakdown = [
+    `${fmt(myItemCents)} items`,
+    myTaxCents > 0 ? `${fmt(myTaxCents)} tax` : null,
+    myTipCents > 0 ? `${fmt(myTipCents)} tip` : null,
+    myServiceCents > 0 ? `${fmt(myServiceCents)} service` : null,
+  ]
+    .filter(Boolean)
+    .join(" + ");
   const nameOf = (pid: string) =>
     summary.participants.find((p) => p.id === pid)?.display_name ?? "?";
   const serviceTotal = summary.split.service_charge_cents;
@@ -485,6 +501,9 @@ export default function FriendSplit() {
           <div>
             <p className="label">You owe</p>
             <p className="amt">{fmt(owes)}</p>
+            {owes > 0 && extrasCents > 0 && (
+              <p className="sub">{owedBreakdown}</p>
+            )}
           </div>
           <button
             className="btn btn-accent"
