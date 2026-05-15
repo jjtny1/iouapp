@@ -138,8 +138,16 @@ NOT EXISTS` never alters an existing table, so a column added only to
 - **Receipt parsing is behind a `Parser` interface** (`internal/receipt`):
   `ClaudeParser` when an API key is set, `StubParser` otherwise — keeps the full
   flow testable offline.
-- **Payments are behind a `payment.Provider` interface** — `MockProvider` is
-  active for v1; real x402/USDC settlement is the planned next step.
+- **Payments are Venmo hand-offs.** The host saves a `venmo_handle` on their
+  user row (set in the bill editor or on the Home page; new tabs reuse it).
+  `POST /pay` returns a payment intent — the host's handle, the amount owed,
+  and `app_url`/`web_url` deep links built by `internal/payment`. Phones get
+  the `venmo://` app link; desktops get a QR code encoding the `web_url`.
+  Venmo reports nothing back, so a payment is marked paid by the friend's
+  self-report (`POST /pay/confirm`, no proof) or by the host toggling it
+  (`POST /bills/{id}/payments/{pid}` with `{"paid":bool}`). The `payments`
+  table keeps vestigial `provider`/`tx_ref` columns from the earlier USDC
+  design — always written `'venmo'`/`NULL`, never read.
 - **Money is integer cents end to end.** Tax, tip and a percent service charge
   are prorated with the largest-remainder method against the bill's _full_ item
   subtotal — `split.prorate` treats the unclaimed items as one extra bucket, so
@@ -165,10 +173,10 @@ count)` shares — shares beyond the joined participants go to `unclaimed` so
   `formatMoney` (`web/src/money.ts`) uses `Intl.NumberFormat` to render the
   right symbol and fraction digits. Currency-code validation lives in
   `internal/money` (`NormalizeCurrency`).
-- **Payment settlement currency is separate from the bill currency.** Payments
-  settle in `payment.Currency` (`USDC`); the `payments.currency` column is the
-  settlement coin, not the bill's. FX conversion from a non-USD bill currency
-  to the settlement currency is intentionally deferred to the x402 work.
+- **Venmo payments carry the bill's own currency.** `payments.currency` is the
+  bill currency, and the amount in a Venmo link is its raw major-unit value
+  (`amount_cents/100`). Venmo settles in USD only, so for a non-USD bill the
+  prefilled amount is nominal — FX conversion is intentionally not done.
 - **One item row = one claimable unit.** A receipt line with quantity N>1 is
   expanded at parse time by `receipt.Flatten` into N separate `qty=1` items
   named `Name (1 of N)` … `(N of N)`, each at the per-unit price. This lets

@@ -165,12 +165,12 @@ function TabRow({
 export default function Home() {
   const { user, setUser } = useAuth();
   const navigate = useNavigate();
-  const [wallet, setWallet] = useState(user?.wallet_address ?? "");
+  const [handle, setHandle] = useState(user?.venmo_handle ?? "");
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [bills, setBills] = useState<Bill[]>([]);
   const [creating, setCreating] = useState(false);
-  const [showWallet, setShowWallet] = useState(false);
+  const [showVenmo, setShowVenmo] = useState(false);
 
   useEffect(() => {
     api
@@ -181,13 +181,14 @@ export default function Home() {
 
   if (!user) return null;
 
-  async function saveWallet(e: FormEvent) {
+  async function saveVenmoHandle(e: FormEvent) {
     e.preventDefault();
     setStatus(null);
     setBusy(true);
     try {
-      const updated = await api.updateWallet(wallet);
+      const updated = await api.updateVenmoHandle(handle);
       setUser(updated);
+      setHandle(updated.venmo_handle ?? "");
       setStatus("Saved.");
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "save failed");
@@ -287,11 +288,11 @@ export default function Home() {
           </>
         )}
 
-        {/* Payout wallet — friends settle to this address */}
+        {/* Venmo handle — friends settle their share straight to it */}
         <div className="mt-8">
           <button
             className="row row-between"
-            onClick={() => setShowWallet((v) => !v)}
+            onClick={() => setShowVenmo((v) => !v)}
             style={{
               background: "transparent",
               border: 0,
@@ -300,29 +301,29 @@ export default function Home() {
               cursor: "pointer",
             }}
           >
-            <span className="eyebrow">Payout wallet</span>
+            <span className="eyebrow">Venmo handle</span>
             <span className="eyebrow muted">
-              {user.wallet_address ? "set ✓" : "not set"}
+              {user.venmo_handle ? "set ✓" : "not set"}
             </span>
           </button>
-          {showWallet && (
-            <form onSubmit={saveWallet} className="col gap-2 mt-3 fade-up">
+          {showVenmo && (
+            <form onSubmit={saveVenmoHandle} className="col gap-2 mt-3 fade-up">
               <p className="body muted" style={{ fontSize: 12 }}>
-                Where your friends' payments land.
+                Where your friends send their share. New tabs reuse it.
               </p>
               <input
                 className="input input-mono"
                 type="text"
-                placeholder="0x…"
-                value={wallet}
-                onChange={(e) => setWallet(e.target.value)}
+                placeholder="@your-venmo"
+                value={handle}
+                onChange={(e) => setHandle(e.target.value)}
               />
               <button
                 type="submit"
                 className="btn btn-ghost btn-sm"
                 disabled={busy}
               >
-                <Icon.Wallet size={14} /> {busy ? "Saving…" : "Save wallet"}
+                <Icon.Wallet size={14} /> {busy ? "Saving…" : "Save handle"}
               </button>
               {status && (
                 <p className="body muted" style={{ fontSize: 12 }}>

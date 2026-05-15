@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
-import {
-  api,
-  type Bill,
-  type BillSummary,
-  type PaymentChallenge,
-} from "../api";
+import { api, type Bill, type BillSummary, type PaymentIntent } from "../api";
 import { formatMoney } from "../money";
-import { Avatar, AvatarStack, Brand, Icon, PaperApp } from "../ui";
+import { Avatar, AvatarStack, Brand, Icon, PaperApp, QrCode } from "../ui";
+
+// Phones get a venmo:// deep link that opens the Venmo app; desktops, which
+// have no app, get a QR code to scan with their phone instead.
+const isMobile =
+  typeof navigator !== "undefined" &&
+  /iphone|ipad|ipod|android/i.test(navigator.userAgent);
 
 function tokenKey(billId: string): string {
   return `iou:participant:${billId}`;
@@ -27,10 +28,10 @@ export default function FriendSplit() {
   const [loading, setLoading] = useState(true);
   const [joining, setJoining] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
-  const [challenge, setChallenge] = useState<PaymentChallenge | null>(null);
-  const [loadingChallenge, setLoadingChallenge] = useState(false);
+  const [intent, setIntent] = useState<PaymentIntent | null>(null);
+  const [loadingIntent, setLoadingIntent] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [txRef, setTxRef] = useState<string | null>(null);
+  const [handedOff, setHandedOff] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -104,37 +105,43 @@ export default function FriendSplit() {
     if (!bill || !participantToken) return;
     setPayOpen(true);
     setError(null);
-    setLoadingChallenge(true);
+    setHandedOff(false);
+    setLoadingIntent(true);
     try {
       const res = await api.pay(bill.id, participantToken);
-      if (res.kind === "paid") {
-        setTxRef(res.payment.tx_ref);
+      if (res.status === "paid") {
         await refresh();
         setPayOpen(false);
       } else {
-        setChallenge(res.challenge);
+        setIntent(res);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "could not start payment");
       setPayOpen(false);
     } finally {
-      setLoadingChallenge(false);
+      setLoadingIntent(false);
+    }
+  }
+
+  // openVenmo hands the friend off to the Venmo app (phones) or venmo.com
+  // (desktop), prefilled with the host's handle and the amount owed.
+  function openVenmo() {
+    if (!intent) return;
+    setHandedOff(true);
+    if (isMobile) {
+      window.location.href = intent.app_url;
+    } else {
+      window.open(intent.web_url, "_blank", "noopener");
     }
   }
 
   async function confirmPay() {
-    if (!bill || !participantToken || !challenge) return;
+    if (!bill || !participantToken || !intent) return;
     setConfirming(true);
     setError(null);
     try {
-      const payment = await api.confirmPayment(
-        bill.id,
-        participantToken,
-        challenge.payment_id,
-        "mock-proof",
-      );
-      setTxRef(payment.tx_ref);
-      setChallenge(null);
+      await api.confirmPayment(bill.id, participantToken, intent.payment_id);
+      setIntent(null);
       await refresh();
       setPayOpen(false);
     } catch (err) {
@@ -264,7 +271,6 @@ export default function FriendSplit() {
   const myName = myParticipant?.display_name || name || "you";
   const firstName = myName.split(/\s+/)[0];
   const isPaid = myParticipant?.payment_status === "paid";
-  const paidTxRef = txRef ?? myParticipant?.tx_ref ?? null;
   const owes = myShare?.total_cents ?? 0;
   const fmt = (c: number) => formatMoney(c, bill.currency);
   // The "you owe" total folds prorated tax, tip and service on top of the
@@ -369,30 +375,11 @@ export default function FriendSplit() {
                   {fmt(owes)}
                 </span>
               </div>
-              {paidTxRef && (
-                <>
-                  <hr className="dash" style={{ margin: "10px 0" }} />
-                  <div className="row row-between">
-                    <span
-                      className="mono muted"
-                      style={{ fontSize: 10, letterSpacing: "0.06em" }}
-                    >
-                      TX REF
-                    </span>
-                    <span
-                      className="mono muted truncate"
-                      style={{ fontSize: 10, maxWidth: 160 }}
-                    >
-                      {paidTxRef}
-                    </span>
-                  </div>
-                </>
-              )}
             </div>
           </div>
 
           <p className="body muted center" style={{ fontSize: 12 }}>
-            That's it — you can close this page.
+            Paid in Venmo — you can close this page.
           </p>
         </div>
       </PaperApp>
@@ -601,80 +588,141 @@ export default function FriendSplit() {
               </div>
             </div>
 
-            <div
-              className="mt-4"
-              style={{
-                background: "rgba(232,193,74,.20)",
-                borderRadius: 12,
-                padding: "12px 14px",
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-              }}
-            >
-              <div
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 8,
-                  background: "var(--accent)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "var(--ink)",
-                }}
-              >
-                <Icon.Wallet size={16} />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ margin: 0, fontSize: 13, fontWeight: 500 }}>
-                  {challenge
-                    ? `${challenge.currency} · ${challenge.network}`
-                    : "Preparing payment…"}
-                </p>
-                {challenge && (
-                  <p
-                    className="mono muted truncate"
-                    style={{ margin: "2px 0 0", fontSize: 10.5 }}
+            {loadingIntent ? (
+              <p className="body muted center mt-4" style={{ fontSize: 13 }}>
+                <span className="spinner" /> Preparing your Venmo payment…
+              </p>
+            ) : intent ? (
+              <>
+                {/* Venmo recipient */}
+                <div
+                  className="mt-4"
+                  style={{
+                    background: "rgba(61,149,206,.12)",
+                    borderRadius: 12,
+                    padding: "12px 14px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 8,
+                      background: "#3D95CE",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: "#fff",
+                      fontWeight: 700,
+                      fontSize: 17,
+                    }}
                   >
-                    {challenge.recipient}
+                    V
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ margin: 0, fontSize: 13, fontWeight: 500 }}>
+                      Pay @{intent.venmo_handle} on Venmo
+                    </p>
+                    <p
+                      className="mono muted truncate"
+                      style={{ margin: "2px 0 0", fontSize: 10.5 }}
+                    >
+                      {fmt(owes)} · {intent.note}
+                    </p>
+                  </div>
+                </div>
+
+                {isMobile ? (
+                  <>
+                    <button
+                      className="btn btn-block mt-4"
+                      style={{ padding: "14px 18px" }}
+                      onClick={openVenmo}
+                    >
+                      Open Venmo <Icon.Arrow size={12} />
+                    </button>
+                    <p
+                      className="body muted center"
+                      style={{ fontSize: 11, marginTop: 8 }}
+                    >
+                      Venmo opens prefilled with {fmt(owes)} to @
+                      {intent.venmo_handle}.
+                    </p>
+                  </>
+                ) : (
+                  <div
+                    className="mt-4"
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                    }}
+                  >
+                    {/* The QR encodes the venmo:// app link so a phone
+                        camera opens it straight in the Venmo app; the web
+                        link below is the fallback for paying on the desktop
+                        itself, which has no app. */}
+                    <QrCode value={intent.app_url} />
+                    <p
+                      className="body muted center"
+                      style={{ fontSize: 11, marginTop: 8 }}
+                    >
+                      Scan with your phone's camera to pay {fmt(owes)} in the
+                      Venmo app — or{" "}
+                      <a
+                        href={intent.web_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => setHandedOff(true)}
+                      >
+                        open Venmo on the web
+                      </a>
+                      .
+                    </p>
+                  </div>
+                )}
+
+                {error && (
+                  <p className="body danger mt-3" style={{ fontSize: 12 }}>
+                    {error}
                   </p>
                 )}
-              </div>
-            </div>
 
-            {error && (
-              <p className="body danger mt-3" style={{ fontSize: 12 }}>
-                {error}
-              </p>
+                <hr className="dash" style={{ margin: "16px 0 12px" }} />
+                <p
+                  className="body muted center"
+                  style={{ fontSize: 12, marginBottom: 8 }}
+                >
+                  {handedOff
+                    ? "All done in Venmo? Mark yourself settled."
+                    : "Already sent it in Venmo?"}
+                </p>
+                <button
+                  className={`btn btn-block${handedOff ? "" : " btn-ghost"}`}
+                  disabled={confirming}
+                  onClick={confirmPay}
+                >
+                  {confirming ? (
+                    <>
+                      <span className="spinner" /> Saving…
+                    </>
+                  ) : (
+                    <>
+                      <Icon.Check size={12} /> I've paid {fmt(owes)}
+                    </>
+                  )}
+                </button>
+              </>
+            ) : (
+              error && (
+                <p className="body danger mt-3" style={{ fontSize: 12 }}>
+                  {error}
+                </p>
+              )
             )}
-
-            <button
-              className="btn btn-block mt-4"
-              style={{ padding: "14px 18px" }}
-              disabled={loadingChallenge || confirming || !challenge}
-              onClick={confirmPay}
-            >
-              {confirming ? (
-                <>
-                  <span className="spinner" /> Confirming…
-                </>
-              ) : loadingChallenge ? (
-                <>
-                  <span className="spinner" /> Preparing…
-                </>
-              ) : (
-                <>
-                  Pay {fmt(owes)} <Icon.Arrow size={12} />
-                </>
-              )}
-            </button>
-            <p
-              className="body muted center"
-              style={{ fontSize: 11, marginTop: 10 }}
-            >
-              Simulated payment — no real funds will move.
-            </p>
           </div>
         </>
       )}

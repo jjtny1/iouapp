@@ -12,12 +12,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jjtny1/splitit/internal/auth"
+	"github.com/jjtny1/splitit/internal/payment"
 )
 
 type user struct {
-	ID            string  `json:"id"`
-	Email         string  `json:"email"`
-	WalletAddress *string `json:"wallet_address"`
+	ID          string  `json:"id"`
+	Email       string  `json:"email"`
+	VenmoHandle *string `json:"venmo_handle"`
 }
 
 type ctxKey string
@@ -177,26 +178,35 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 	u, _ := r.Context().Value(userCtxKey).(user)
 	var req struct {
-		WalletAddress string `json:"wallet_address"`
+		VenmoHandle string `json:"venmo_handle"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	wallet := strings.TrimSpace(req.WalletAddress)
-	var walletVal any
-	if wallet != "" {
-		walletVal = wallet
+	// An empty handle clears the payout identity; a non-empty one must be a
+	// valid Venmo username.
+	var handleVal any
+	var handle string
+	if strings.TrimSpace(req.VenmoHandle) != "" {
+		h, ok := payment.NormalizeHandle(req.VenmoHandle)
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "enter a valid Venmo username (5–30 letters, digits, _ or -)",
+			})
+			return
+		}
+		handle, handleVal = h, h
 	}
 	if _, err := s.DB.ExecContext(r.Context(),
-		`UPDATE users SET wallet_address = ? WHERE id = ?`, walletVal, u.ID); err != nil {
+		`UPDATE users SET venmo_handle = ? WHERE id = ?`, handleVal, u.ID); err != nil {
 		log.Printf("update me: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-	if wallet != "" {
-		u.WalletAddress = &wallet
+	if handle != "" {
+		u.VenmoHandle = &handle
 	} else {
-		u.WalletAddress = nil
+		u.VenmoHandle = nil
 	}
 	writeJSON(w, http.StatusOK, u)
 }
@@ -222,8 +232,8 @@ func (s *Server) upsertUser(ctx context.Context, email string) (user, error) {
 func (s *Server) userByEmail(ctx context.Context, email string) (user, error) {
 	var u user
 	err := s.DB.QueryRowContext(ctx,
-		`SELECT id, email, wallet_address FROM users WHERE email = ?`, email).
-		Scan(&u.ID, &u.Email, &u.WalletAddress)
+		`SELECT id, email, venmo_handle FROM users WHERE email = ?`, email).
+		Scan(&u.ID, &u.Email, &u.VenmoHandle)
 	return u, err
 }
 
@@ -236,10 +246,10 @@ func (s *Server) currentUser(r *http.Request) (user, bool) {
 	var u user
 	var expiresAt int64
 	err = s.DB.QueryRowContext(r.Context(),
-		`SELECT u.id, u.email, u.wallet_address, sessions.expires_at
+		`SELECT u.id, u.email, u.venmo_handle, sessions.expires_at
 		 FROM sessions JOIN users u ON u.id = sessions.user_id
 		 WHERE sessions.token = ?`, c.Value).
-		Scan(&u.ID, &u.Email, &u.WalletAddress, &expiresAt)
+		Scan(&u.ID, &u.Email, &u.VenmoHandle, &expiresAt)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			log.Printf("currentUser: %v", err)

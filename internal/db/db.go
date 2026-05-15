@@ -21,6 +21,10 @@ var migrations = []string{
 	`ALTER TABLE bills ADD COLUMN service_charge_rate_bps INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE bills ADD COLUMN service_charge_cents INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE bills ADD COLUMN service_charge_headcount INTEGER NOT NULL DEFAULT 0`,
+	// venmo_handle replaces the old USDC wallet_address as the host's payout
+	// identity. The legacy wallet_address column is left in place on existing
+	// databases — nothing reads it — so no drop migration is needed.
+	`ALTER TABLE users ADD COLUMN venmo_handle TEXT`,
 }
 
 type DB struct {
