@@ -15,7 +15,7 @@ func spaHandler(dir string) http.Handler {
 		index := filepath.Join(dir, "index.html")
 		if _, err := os.Stat(index); err != nil {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			_, _ = w.Write([]byte("splitit API is running. Frontend not built yet — run `npm run build` in web/."))
+			_, _ = w.Write([]byte("IOU API is running. Frontend not built yet — run `npm run build` in web/."))
 			return
 		}
 

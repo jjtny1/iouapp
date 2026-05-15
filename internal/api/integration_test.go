@@ -16,7 +16,7 @@ import (
 	"github.com/jjtny1/splitit/internal/db"
 )
 
-// testEnv is a fully wired splitit server backed by a fresh temp SQLite DB.
+// testEnv is a fully wired IOU server backed by a fresh temp SQLite DB.
 type testEnv struct {
 	t      *testing.T
 	server *httptest.Server
@@ -37,7 +37,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	cfg := config.Config{
 		Port:            "0",
 		DBPath:          dbPath,
-		BaseURL:         "http://splitit.test",
+		BaseURL:         "http://iou.test",
 		AnthropicKey:    "",
 		DevMode:         true,
 		PaymentProvider: "mock",

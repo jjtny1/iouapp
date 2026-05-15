@@ -1,4 +1,4 @@
-// Package money holds shared money helpers. splitit tracks every amount as
+// Package money holds shared money helpers. IOU tracks every amount as
 // integer cents — hundredths of the currency's major unit — and this package
 // centralizes currency-code handling so the receipt parser and the HTTP API
 // agree on what a valid currency looks like.

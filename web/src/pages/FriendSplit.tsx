@@ -10,10 +10,10 @@ import { formatMoney } from "../money";
 import { Avatar, AvatarStack, Brand, Icon, PaperApp } from "../ui";
 
 function tokenKey(billId: string): string {
-  return `splitit:participant:${billId}`;
+  return `iou:participant:${billId}`;
 }
 function idKey(billId: string): string {
-  return `splitit:participant-id:${billId}`;
+  return `iou:participant-id:${billId}`;
 }
 
 export default function FriendSplit() {
