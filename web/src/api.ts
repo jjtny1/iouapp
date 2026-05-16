@@ -32,7 +32,6 @@ export interface Bill {
   service_charge_cents: number;
   service_charge_headcount: number;
   split_mode: SplitMode;
-  status: string;
   items: BillItem[];
   created_at: number;
   friend_token?: string;
@@ -48,8 +47,9 @@ export interface BillUpdate {
   service_charge_rate_bps: number;
   service_charge_cents: number;
   service_charge_headcount: number;
-  status?: string;
-  items: { name: string; price_cents: number }[];
+  // id is the existing item's id, echoed back so the server updates that row
+  // in place and any claims on it survive the edit; omit it for a new item.
+  items: { id?: string; name: string; price_cents: number }[];
 }
 
 export type PaymentStatus = "none" | "pending" | "paid";

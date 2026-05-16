@@ -566,6 +566,85 @@ func TestUpdateBillServiceCharge(t *testing.T) {
 	}, http.StatusBadRequest, nil)
 }
 
+// TestUpdateBillAfterClaims is a regression test: editing a bill's items must
+// succeed even after a friend has claimed one. Items are matched by id and
+// updated in place, so the claims.item_id foreign key is never violated — the
+// old delete-and-recreate path failed here with a 500.
+func TestUpdateBillAfterClaims(t *testing.T) {
+	e := newTestEnv(t)
+	host := e.signIn("host@example.com")
+	bill := e.createBill(host)
+	billID := bill["id"].(string)
+	friendToken := bill["friend_token"].(string)
+	e.uploadReceipt(host, billID, http.StatusOK, nil)
+
+	// Read the saved items, with their ids, as the host.
+	var loaded map[string]any
+	e.doJSON(host, http.MethodGet, "/api/bills/"+billID, nil, http.StatusOK, &loaded)
+	itemsRaw, _ := loaded["items"].([]any)
+	if len(itemsRaw) < 2 {
+		t.Fatalf("need >= 2 items, got %d", len(itemsRaw))
+	}
+	type item struct {
+		id, name string
+		price    int
+	}
+	var items []item
+	for _, it := range itemsRaw {
+		m := it.(map[string]any)
+		items = append(items, item{m["id"].(string), m["name"].(string), int(m["price_cents"].(float64))})
+	}
+
+	// A friend joins and claims item 0.
+	var join struct {
+		ParticipantToken string `json:"participant_token"`
+	}
+	e.doJSON(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/participants",
+		map[string]string{"display_name": "Alice", "t": friendToken},
+		http.StatusCreated, &join)
+	e.doJSON(e.newClient(), http.MethodPut, "/api/bills/"+billID+"/claims",
+		map[string]any{"participant_token": join.ParticipantToken, "item_ids": []string{items[0].id}},
+		http.StatusOK, nil)
+
+	// The host edits the bill — renaming item 0, bumping tax — sending every
+	// item id back. Before the fix this returned 500 (FOREIGN KEY constraint).
+	reqItems := make([]map[string]any, len(items))
+	for i, it := range items {
+		name := it.name
+		if i == 0 {
+			name += " (edited)"
+		}
+		reqItems[i] = map[string]any{"id": it.id, "name": name, "price_cents": it.price}
+	}
+	var updated map[string]any
+	e.doJSON(host, http.MethodPatch, "/api/bills/"+billID, map[string]any{
+		"restaurant": "Edited", "tax_cents": 199, "tip_cents": 0, "items": reqItems,
+	}, http.StatusOK, &updated)
+
+	// Item 0 kept its id, so the claim survives.
+	updItems, _ := updated["items"].([]any)
+	if got := updItems[0].(map[string]any)["id"].(string); got != items[0].id {
+		t.Errorf("item 0 id changed on edit: got %s, want %s", got, items[0].id)
+	}
+	var summary struct {
+		Split struct {
+			Participants []struct {
+				TotalCents int `json:"total_cents"`
+			} `json:"participants"`
+		} `json:"split"`
+	}
+	e.doJSON(e.newClient(), http.MethodGet,
+		"/api/bills/"+billID+"/summary?t="+friendToken, nil, http.StatusOK, &summary)
+	if len(summary.Split.Participants) != 1 || summary.Split.Participants[0].TotalCents <= 0 {
+		t.Errorf("claim did not survive edit: participants=%+v", summary.Split.Participants)
+	}
+
+	// Dropping the claimed item still succeeds — its claim is cleared with it.
+	e.doJSON(host, http.MethodPatch, "/api/bills/"+billID, map[string]any{
+		"restaurant": "Edited", "tax_cents": 199, "tip_cents": 0, "items": reqItems[1:],
+	}, http.StatusOK, nil)
+}
+
 func TestPayments(t *testing.T) {
 	e := newTestEnv(t)
 	host := e.signIn("payee@example.com")

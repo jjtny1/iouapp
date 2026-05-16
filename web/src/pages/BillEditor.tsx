@@ -18,6 +18,10 @@ import { formatMoney } from "../money";
 import { Avatar, Brand, Icon, PaperApp, QrCode, ReceiptZig } from "../ui";
 
 interface DraftItem {
+  // id is the saved item's server id; absent on an item just added in the
+  // editor. It is echoed back on save so the row is updated in place and any
+  // claims on it survive the edit.
+  id?: string;
   name: string;
   priceDollars: string;
 }
@@ -243,6 +247,7 @@ export default function BillEditor() {
     );
     setItems(
       b.items.map((it) => ({
+        id: it.id,
         name: it.name,
         priceDollars: centsToDollars(it.price_cents),
       })),
@@ -332,6 +337,7 @@ export default function BillEditor() {
         service_charge_cents: scKind === "fixed" ? scFixedCents : 0,
         service_charge_headcount: scKind === "fixed" ? scHeadcountNum : 0,
         items: items.map((it) => ({
+          id: it.id,
           name: it.name,
           price_cents: dollarsToCents(it.priceDollars),
         })),

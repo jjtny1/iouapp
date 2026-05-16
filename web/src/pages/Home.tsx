@@ -33,21 +33,15 @@ function formatDate(createdAt: number): string {
   });
 }
 
-function isSettled(b: Bill): boolean {
-  return b.status.toLowerCase() === "settled";
-}
-
-// TabRow renders one saved tab on Home — an "card" for open tabs, a compact
-// "line" for settled ones. A dim trash handle reveals an inline confirm panel
-// that slides over the row; deletion runs only after the host confirms.
+// TabRow renders one saved tab on Home as a card. A dim trash handle reveals
+// an inline confirm panel that slides over the row; deletion runs only after
+// the host confirms.
 function TabRow({
   bill,
-  variant,
   onOpen,
   onDelete,
 }: {
   bill: Bill;
-  variant: "card" | "line";
   onOpen: () => void;
   onDelete: () => Promise<void>;
 }) {
@@ -68,57 +62,38 @@ function TabRow({
   }
 
   return (
-    <div className={`tab tab-${variant}`}>
+    <div className="tab tab-card">
       <button
         className="tab-face"
         onClick={onOpen}
         tabIndex={confirming ? -1 : 0}
       >
-        {variant === "card" ? (
-          <div
-            className="row row-between gap-3"
-            style={{ alignItems: "flex-start" }}
-          >
-            <div className="flex1">
-              <p className="h-card truncate">
-                {bill.restaurant || "Untitled tab"}
-              </p>
-              <p
-                className="mono"
-                style={{
-                  margin: "4px 0 0",
-                  fontSize: 11,
-                  color: "var(--muted)",
-                }}
-              >
-                {formatDate(bill.created_at)} · {bill.status}
-              </p>
-            </div>
-            <span
+        <div
+          className="row row-between gap-3"
+          style={{ alignItems: "flex-start" }}
+        >
+          <div className="flex1">
+            <p className="h-card truncate">
+              {bill.restaurant || "Untitled tab"}
+            </p>
+            <p
               className="mono"
-              style={{ fontSize: 14, fontWeight: 600, flexShrink: 0 }}
+              style={{
+                margin: "4px 0 0",
+                fontSize: 11,
+                color: "var(--muted)",
+              }}
             >
-              {formatMoney(billTotal(bill), bill.currency)}
-            </span>
+              {formatDate(bill.created_at)}
+            </p>
           </div>
-        ) : (
-          <div className="row row-between">
-            <div>
-              <p style={{ margin: 0, fontSize: 14 }}>
-                {bill.restaurant || "Untitled tab"}
-              </p>
-              <p
-                className="mono muted"
-                style={{ margin: "2px 0 0", fontSize: 11 }}
-              >
-                {formatDate(bill.created_at)}
-              </p>
-            </div>
-            <span className="mono muted" style={{ fontSize: 13 }}>
-              {formatMoney(billTotal(bill), bill.currency)}
-            </span>
-          </div>
-        )}
+          <span
+            className="mono"
+            style={{ fontSize: 14, fontWeight: 600, flexShrink: 0 }}
+          >
+            {formatMoney(billTotal(bill), bill.currency)}
+          </span>
+        </div>
       </button>
 
       <button
@@ -220,9 +195,6 @@ export default function Home() {
     setBills((prev) => prev.filter((b) => b.id !== id));
   }
 
-  const open = bills.filter((b) => !isSettled(b));
-  const settled = bills.filter(isSettled);
-
   return (
     <PaperApp>
       <div className="page">
@@ -248,44 +220,17 @@ export default function Home() {
           </p>
         )}
 
-        {open.length > 0 && (
-          <>
-            <div className="row row-between mt-6 mb-2">
-              <span className="eyebrow">Open</span>
-              <span className="eyebrow muted">{open.length}</span>
-            </div>
-            <div className="col gap-2">
-              {open.map((b) => (
-                <TabRow
-                  key={b.id}
-                  bill={b}
-                  variant="card"
-                  onOpen={() => navigate(`/bills/${b.id}`)}
-                  onDelete={() => deleteBill(b.id)}
-                />
-              ))}
-            </div>
-          </>
-        )}
-
-        {settled.length > 0 && (
-          <>
-            <div className="row row-between mt-6 mb-2">
-              <span className="eyebrow">Settled</span>
-              <span className="eyebrow muted">{settled.length}</span>
-            </div>
-            <div>
-              {settled.map((b) => (
-                <TabRow
-                  key={b.id}
-                  bill={b}
-                  variant="line"
-                  onOpen={() => navigate(`/bills/${b.id}`)}
-                  onDelete={() => deleteBill(b.id)}
-                />
-              ))}
-            </div>
-          </>
+        {bills.length > 0 && (
+          <div className="col gap-2 mt-6">
+            {bills.map((b) => (
+              <TabRow
+                key={b.id}
+                bill={b}
+                onOpen={() => navigate(`/bills/${b.id}`)}
+                onDelete={() => deleteBill(b.id)}
+              />
+            ))}
+          </div>
         )}
 
         {/* Venmo handle — friends settle their share straight to it */}

@@ -88,6 +88,38 @@ iou:local` — a bare `-e NAME` forwards that var from your shell so keys
   never hit the command line. `IOU_DB` must sit under `/tmp`: the distroless
   `nonroot` user cannot write `/app`, and the file is ephemeral per run.
 
+### Browser testing with Chrome
+
+For verifying _rendered_ UI flows (not just the API) with the Chrome
+automation tools. Build the SPA first (`cd web && npm run build`) and run the
+Go server on an uncommon high port so it serves the current build — the
+browser hits the Go server directly, no Vite proxy.
+
+- **Sign in via the dev magic link.** With `IOU_DEV=1` the SignIn page shows a
+  "Dev link — open it" link after you submit an email. _Clicking it bounces
+  straight back to `/signin`_ — the known `AuthProvider` bootstrap race (see
+  Learned Patterns). The cookie is set by then anyway, so just `navigate` to
+  `/` and the session sticks. Don't chase the bounce as a bug.
+- **Drive the editor by element ref, not pixel coordinates.** The bill editor
+  is a long page that scrolls and re-renders after every save / auto-split, so
+  cached screenshot coordinates go stale and clicks land between elements
+  (silently — no request fires). Use `find` to get a fresh `ref` for the
+  field/button, then click or `form_input` against the ref.
+- **File uploads can't be driven** (the extension blocks programmatic
+  `file_upload`). Skip the receipt-photo and audio-record paths in the
+  browser: use the editor's **"Enter items manually"** button and the
+  **typed** auto-split prompt instead — both exercise the same backend.
+- **Confirm a save actually happened server-side — don't trust the UI.** A
+  missed click looks like nothing happened. After an action, `grep` the server
+  log for the expected `PATCH`/`POST` line and inspect the SQLite DB
+  (`IOU_DB`) directly; `grep -i 'error|constraint|500|panic'` the log to catch
+  a 500 the UI swallowed into a generic message. `read_console_messages` with
+  `onlyErrors` catches frontend exceptions.
+- A full claim-aware flow with no API keys: create tab → "Enter items
+  manually" → Save → typed auto-split (StubAssigner names the people) → edit an
+  item → Save again. That last save is the regression check for editing a bill
+  that already has claims.
+
 ---
 
 ## Mistakes to Avoid
@@ -297,6 +329,15 @@ count)` shares — shares beyond the joined participants go to `unclaimed` so
   bill currency, and the amount in a Venmo link is its raw major-unit value
   (`amount_cents/100`). Venmo settles in USD only, so for a non-USD bill the
   prefilled amount is nominal — FX conversion is intentionally not done.
+- **`bills.status` is vestigial — always `'draft'`.** The column exists
+  (`schema.sql` defaults it to `'draft'`) and `PATCH /api/bills/{id}` still
+  accepts a `status` of `'draft'`/`'open'`, but nothing in the app ever
+  transitions it: not the editor's save, not a friend joining, not a payment.
+  The frontend doesn't send or display it. Treat it like the `payments`
+  table's `provider`/`tx_ref` columns — left in place, never read. Don't build
+  UI on `status` (the old Home page split tabs into "Open"/"Settled" on a
+  `status === 'settled'` that was never written) without first wiring a real
+  transition end to end.
 - **One item row = one claimable unit.** A receipt line with quantity N>1 is
   expanded at parse time by `receipt.Flatten` into N separate `qty=1` items
   named `Name (1 of N)` … `(N of N)`, each at the per-unit price. This lets
@@ -359,10 +400,13 @@ participant_id)` only and relies on the column's `DEFAULT 1`. That works
   `Verify` sets the user and clobber it back to `null`, bouncing to `/signin`.
   A full page reload of `/` after the cookie is set re-authenticates cleanly.
   Known issue, not yet fixed.
-- **Editing a bill after friends have claimed fails.** `saveBillAndItems` (used
-  by `PATCH /api/bills/{id}` and receipt re-upload) deletes and recreates every
-  `items` row; once `claims` reference those items the delete violates the
-  `claims.item_id` foreign key and the request 500s with `FOREIGN KEY
-constraint failed`. The host must finish editing _before_ sharing the link.
-  Known issue, not yet fixed — a proper fix needs item IDs preserved across
-  edits so claims survive.
+- **`saveBillAndItems` reconciles items by id, not delete-and-recreate.** The
+  editor sends each item's `id` back on save (`PATCH /api/bills/{id}`); the
+  server updates matching rows in place, inserts items with no/unknown id as
+  new, and deletes dropped items after first clearing any `claims` on them. A
+  kept item keeps its id, so a `claims.item_id` row survives an edit — the
+  host can edit a bill after friends have claimed. (The earlier code deleted
+  and recreated every `items` row, which 500'd with `FOREIGN KEY constraint
+failed` once claims existed.) Receipt re-upload still sends items with no id,
+  so it replaces every item and cascade-clears their claims — re-parsing a
+  receipt intentionally starts the split over.

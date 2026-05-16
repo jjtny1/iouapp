@@ -305,6 +305,9 @@ func (s *Server) handleUpdateBill(w http.ResponseWriter, r *http.Request) {
 		ServiceChargeHeadcount int    `json:"service_charge_headcount"`
 		Status                 string `json:"status"`
 		Items                  []struct {
+			// ID is the existing item's id, sent back by the editor so an
+			// edit updates that row in place — empty for a newly added item.
+			ID         string `json:"id"`
 			Name       string `json:"name"`
 			PriceCents int    `json:"price_cents"`
 		} `json:"items"`
@@ -347,7 +350,7 @@ func (s *Server) handleUpdateBill(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "item prices must be non-negative"})
 			return
 		}
-		items = append(items, billItem{Name: it.Name, PriceCents: it.PriceCents, Position: i})
+		items = append(items, billItem{ID: it.ID, Name: it.Name, PriceCents: it.PriceCents, Position: i})
 	}
 
 	b.Restaurant = req.Restaurant
@@ -457,8 +460,12 @@ func (s *Server) loadItems(ctx context.Context, billID string) ([]billItem, erro
 	return items, rows.Err()
 }
 
-// saveBillAndItems updates the bill fields and replaces all of its items
-// within a single transaction.
+// saveBillAndItems updates the bill fields and reconciles its items within a
+// single transaction. Items are matched by id and updated in place rather than
+// deleted and recreated, so any claims referencing a kept item survive the
+// edit — a blanket delete would violate the claims.item_id foreign key. An
+// incoming item with no (or unknown) id is inserted as new; an existing item
+// the caller dropped is deleted along with any claims that referenced it.
 func (s *Server) saveBillAndItems(ctx context.Context, b bill, items []billItem) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -475,15 +482,59 @@ func (s *Server) saveBillAndItems(ctx context.Context, b bill, items []billItem)
 		b.Status, b.ID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM items WHERE bill_id = ?`, b.ID); err != nil {
+
+	// existing holds the ids of the bill's current items, so an incoming id
+	// can be told apart from a stale or forged one.
+	existing := map[string]bool{}
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM items WHERE bill_id = ?`, b.ID)
+	if err != nil {
 		return err
 	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		existing[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	// Upsert each incoming item, recording which existing rows are kept.
+	kept := map[string]bool{}
 	for i := range items {
-		items[i].ID = uuid.NewString()
 		items[i].Position = i
+		if items[i].ID != "" && existing[items[i].ID] {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE items SET name = ?, price_cents = ?, position = ? WHERE id = ? AND bill_id = ?`,
+				items[i].Name, items[i].PriceCents, items[i].Position, items[i].ID, b.ID); err != nil {
+				return err
+			}
+			kept[items[i].ID] = true
+			continue
+		}
+		items[i].ID = uuid.NewString()
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO items (id, bill_id, name, price_cents, position) VALUES (?, ?, ?, ?, ?)`,
 			items[i].ID, b.ID, items[i].Name, items[i].PriceCents, items[i].Position); err != nil {
+			return err
+		}
+	}
+
+	// Delete the items the caller dropped, clearing any claims on them first
+	// so the claims.item_id foreign key is never left dangling.
+	for id := range existing {
+		if kept[id] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM claims WHERE item_id = ?`, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM items WHERE id = ?`, id); err != nil {
 			return err
 		}
 	}
