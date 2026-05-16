@@ -35,9 +35,9 @@ Packages: `internal/{api,auth,db,config,receipt,transcribe,autosplit,payment,spl
 
 Receipt parsing uses the Anthropic vision API and needs `ANTHROPIC_API_KEY`;
 without it the app falls back to `receipt.StubParser` (a fixed sample receipt).
-Audio-split transcription uses the OpenAI Whisper API and needs
-`OPENAI_API_KEY`; without it `transcribe.StubTranscriber` returns a fixed
-transcript.
+Auto-split transcription (the audio path only) uses the OpenAI Whisper API
+and needs `OPENAI_API_KEY`; without it `transcribe.StubTranscriber` returns a
+fixed transcript. A typed auto-split prompt needs no transcription at all.
 
 ---
 
@@ -69,15 +69,17 @@ IOU_DEV=1 PORT=8231 IOU_BASE_URL=http://localhost:8231 \
   The browser is still fine for verifying _rendered_ pages.
 - The receipt endpoint authorizes by host user id, so a fresh API login as the
   same email can upload to a bill a browser session created.
-- **Audio-split has the same upload constraint** (plus in-browser recording
-  needs a real mic). Drive `POST /api/bills/{id}/audio-split` via the API:
-  `curl -b cookies -F 'audio=@clip.m4a;type=audio/m4a' -F 'host_name=Sam' …`.
+- **Auto-split has the same upload constraint** (plus in-browser recording
+  needs a real mic). Drive `POST /api/bills/{id}/auto-split` via the API — it
+  takes either an `audio` file or a `text` field:
+  `curl -b cookies -F 'audio=@clip.m4a;type=audio/m4a' -F 'host_name=Sam' …`
+  or `curl -b cookies -F 'text=Maya had the salad…' -F 'host_name=Sam' …`.
   With no API keys the stub transcriber/assigner run, so the whole flow —
   receipt parse, transcription, assignment — is testable offline.
 - **Make a test audio clip with macOS `say`.** `say -o /tmp/c.aiff "I had the
 burger and an iced tea"` then `afconvert -f m4af -d aac /tmp/c.aiff
 /tmp/c.m4a` produces a real `m4a` that Whisper transcribes — handy for
-  exercising audio-split end to end.
+  exercising the auto-split audio path end to end.
 - **Running the built Docker image locally** is the closest test to prod.
   Build _native_ — NOT `--platform linux/amd64`, that is only for the Fargate
   push: `docker build -t iou:local .`. Then `docker run --rm -p 8080:8080 -e
@@ -114,7 +116,7 @@ iou:local` — a bare `-e NAME` forwards that var from your shell so keys
   equal the printed total it zeroes the tax, and logs any mismatch it can't
   explain. The invariant: item prices + tax + tip + service == printed total.
 - **Don't assume the Go server loads a `.env` file** — it does not. Pass
-  `ANTHROPIC_API_KEY` (receipt parsing + audio-split assignment) and
+  `ANTHROPIC_API_KEY` (receipt parsing + auto-split assignment) and
   `OPENAI_API_KEY` (audio transcription) inline on every start, or those
   features silently fall back to their stubs.
 - **Don't use Node < 20.** The Bash tool snapshots PATH at session start; to use
@@ -174,24 +176,28 @@ NOT EXISTS` never alters an existing table, so a column added only to
   `ClaudeParser` when an API key is set, `StubParser` otherwise — keeps the full
   flow testable offline. `internal/transcribe` and `internal/autosplit` follow
   the same key-or-stub pattern (`transcribe.New`, `autosplit.New`).
-- **Audio-split is a host-driven split mode.** A bill's `split_mode` is
-  `'claim'` (default — friends self-claim items) or `'host'`. In host mode the
-  host uploads or records audio describing the split: `internal/transcribe`
-  (Whisper `WhisperTranscriber`, else `StubTranscriber`) turns it into text,
-  then `internal/autosplit` (Claude `ClaudeAssigner`, else `StubAssigner`) maps
-  the transcript plus the parsed items onto per-item people — referenced by
-  1-based index, not UUID, so the model can't hallucinate IDs. The endpoint
-  `POST /api/bills/{id}/audio-split` (host-only) creates the named people as
-  `participants` and writes `claims`, so `split.Compute` is unchanged. It is
-  re-runnable: every `host_managed` participant and their claims are replaced
-  in one transaction.
+- **Auto-split is an optional host-driven split mode.** A bill's `split_mode`
+  is `'claim'` (default — friends self-claim items) or `'host'`. Auto-splitting
+  is optional: a bill the host never auto-splits stays a normal claim bill.
+  The host describes the split either by **typing a prompt** or by **recording/
+  uploading audio**. Audio goes through `internal/transcribe` (Whisper
+  `WhisperTranscriber`, else `StubTranscriber`) to become text; a typed prompt
+  is used verbatim (no transcription). Either way the text plus the parsed
+  items goes to `internal/autosplit` (Claude `ClaudeAssigner`, else
+  `StubAssigner`), which maps them onto per-item people — referenced by 1-based
+  index, not UUID, so the model can't hallucinate IDs. The endpoint
+  `POST /api/bills/{id}/auto-split` (host-only) takes an `audio` file **or** a
+  `text` field, creates the named people as `participants`, writes `claims`,
+  and stores the text in `bills.split_prompt` — `split.Compute` is unchanged.
+  It is re-runnable: every `host_managed` participant and their claims are
+  replaced in one transaction.
 - **Host-managed participants vs self-joined.** `participants.host_managed`
-  flags people the host created via audio-split; `participants.is_host` flags
+  flags people the host created via auto-split; `participants.is_host` flags
   the host's own participant (shown for completeness — owes no payment to
   themselves). For a `split_mode='host'` bill `handleJoinBill` rejects new
   joins, and the summary exposes each `participant_token` (gated by the share
   token) so a friend opens the link, picks their name, and pays without ever
-  self-claiming. The audio-split editor must run _after_ items are saved —
+  self-claiming. The auto-split editor must run _after_ items are saved —
   editing items afterward hits the `claims` foreign-key issue below.
 - **Payments are Venmo hand-offs.** The host saves a `venmo_handle` on their
   user row (set in the bill editor or on the Home page; new tabs reuse it).
@@ -253,7 +259,7 @@ count)` shares — shares beyond the joined participants go to `unclaimed` so
 --cluster iou-cluster --service iou-service --force-new-deployment`. The
   `ANTHROPIC_API_KEY` lives in SSM Parameter Store as a `SecureString` (name
   `/iou/ANTHROPIC_API_KEY`), injected into the container by ECS — never in
-  Terraform state or the task definition. `OPENAI_API_KEY` (audio-split
+  Terraform state or the task definition. `OPENAI_API_KEY` (auto-split audio
   transcription) lives in SSM the same way, as `/iou/OPENAI_API_KEY`, and is
   injected into the container by ECS (task definition `iou:2` onward).
   `IOU_DEV` is never set in prod. SES
