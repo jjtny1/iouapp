@@ -281,7 +281,13 @@ count)` shares — shares beyond the joined participants go to `unclaimed` so
   (`{ParticipantID, ShareCount}`), not bare participant IDs. The
   `PUT …/claims` API accepts the current `claims:[{item_id,share_count}]`
   shape and still the legacy `item_ids:[…]` (each an implicit count of 1);
-  `share_count` is server-clamped to `[1, 20]`.
+  `share_count` is server-clamped to `[1, 20]`. The `claims` table is
+  INSERTed from _two_ places: `handleSetClaims` lists `share_count`
+  explicitly, but `autosplit.applyAutoSplit` inserts `(item_id,
+participant_id)` only and relies on the column's `DEFAULT 1`. That works
+  because a host-assigned (auto-split) claim _is_ a whole-item claim — `1`
+  is the semantically correct default. Don't change `share_count`'s default
+  or meaning without auditing both INSERT sites.
 - **Auth is magic-link.** In `IOU_DEV=1` the link is returned in the JSON
   response. In prod it is emailed: `NewRouter` takes an `auth.EmailSender`,
   chosen by `IOU_MAIL_PROVIDER` — a log-only sender by default, or `SESSender`
