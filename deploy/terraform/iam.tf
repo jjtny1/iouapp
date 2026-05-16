@@ -26,9 +26,12 @@ resource "aws_iam_role_policy_attachment" "task_execution_managed" {
 
 data "aws_iam_policy_document" "task_execution_secrets" {
   statement {
-    sid       = "ReadAnthropicKey"
-    actions   = ["ssm:GetParameters"]
-    resources = [aws_ssm_parameter.anthropic_api_key.arn]
+    sid     = "ReadApiKeys"
+    actions = ["ssm:GetParameters"]
+    resources = [
+      aws_ssm_parameter.anthropic_api_key.arn,
+      aws_ssm_parameter.openai_api_key.arn,
+    ]
   }
 
   # SecureString parameters encrypted with the AWS-managed SSM key normally

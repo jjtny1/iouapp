@@ -21,7 +21,7 @@ and claim what they ordered, and each settles their prorated share.
 
 **Stack**: Go (`net/http` + SQLite via pure-Go `modernc.org/sqlite`) single
 binary that also serves the SPA; React + TypeScript + Vite frontend in `web/`.
-Packages: `internal/{api,auth,db,config,receipt,payment,split}`.
+Packages: `internal/{api,auth,db,config,receipt,transcribe,autosplit,payment,split}`.
 
 ## Commands
 
@@ -35,6 +35,9 @@ Packages: `internal/{api,auth,db,config,receipt,payment,split}`.
 
 Receipt parsing uses the Anthropic vision API and needs `ANTHROPIC_API_KEY`;
 without it the app falls back to `receipt.StubParser` (a fixed sample receipt).
+Auto-split transcription (the audio path only) uses the OpenAI Whisper API
+and needs `OPENAI_API_KEY`; without it `transcribe.StubTranscriber` returns a
+fixed transcript. A typed auto-split prompt needs no transcription at all.
 
 ---
 
@@ -66,6 +69,24 @@ IOU_DEV=1 PORT=8231 IOU_BASE_URL=http://localhost:8231 \
   The browser is still fine for verifying _rendered_ pages.
 - The receipt endpoint authorizes by host user id, so a fresh API login as the
   same email can upload to a bill a browser session created.
+- **Auto-split has the same upload constraint** (plus in-browser recording
+  needs a real mic). Drive `POST /api/bills/{id}/auto-split` via the API — it
+  takes either an `audio` file or a `text` field:
+  `curl -b cookies -F 'audio=@clip.m4a;type=audio/m4a' -F 'host_name=Sam' …`
+  or `curl -b cookies -F 'text=Maya had the salad…' -F 'host_name=Sam' …`.
+  With no API keys the stub transcriber/assigner run, so the whole flow —
+  receipt parse, transcription, assignment — is testable offline.
+- **Make a test audio clip with macOS `say`.** `say -o /tmp/c.aiff "I had the
+burger and an iced tea"` then `afconvert -f m4af -d aac /tmp/c.aiff
+/tmp/c.m4a` produces a real `m4a` that Whisper transcribes — handy for
+  exercising the auto-split audio path end to end.
+- **Running the built Docker image locally** is the closest test to prod.
+  Build _native_ — NOT `--platform linux/amd64`, that is only for the Fargate
+  push: `docker build -t iou:local .`. Then `docker run --rm -p 8080:8080 -e
+IOU_DEV=1 -e IOU_DB=/tmp/iou.db -e ANTHROPIC_API_KEY -e OPENAI_API_KEY
+iou:local` — a bare `-e NAME` forwards that var from your shell so keys
+  never hit the command line. `IOU_DB` must sit under `/tmp`: the distroless
+  `nonroot` user cannot write `/app`, and the file is ephemeral per run.
 
 ---
 
@@ -79,6 +100,11 @@ IOU_DEV=1 PORT=8231 IOU_BASE_URL=http://localhost:8231 \
   programmatic uploads.
 - **Don't send HEIC to the Anthropic vision API.** It accepts only JPEG, PNG,
   GIF, and WebP. iPhone photos are HEIC and must be converted client-side first.
+- **Don't try to send audio to the Anthropic API.** It accepts only text,
+  images, and PDFs — there is no audio content block. The host's spoken split
+  must be transcribed to text first: the app does this with the OpenAI Whisper
+  API in `internal/transcribe`, then feeds the transcript to Claude in
+  `internal/autosplit`.
 - **Don't add VAT-inclusive tax as `tax_cents`.** `tax_cents` is tax _added on
   top_ of item prices (US-style sales tax). European VAT is already baked into
   the printed prices — often shown broken out into several rate lines (`VAT
@@ -90,8 +116,9 @@ IOU_DEV=1 PORT=8231 IOU_BASE_URL=http://localhost:8231 \
   equal the printed total it zeroes the tax, and logs any mismatch it can't
   explain. The invariant: item prices + tax + tip + service == printed total.
 - **Don't assume the Go server loads a `.env` file** — it does not. Pass
-  `ANTHROPIC_API_KEY` inline on every start, or parsing silently falls back to
-  the stub parser.
+  `ANTHROPIC_API_KEY` (receipt parsing + auto-split assignment) and
+  `OPENAI_API_KEY` (audio transcription) inline on every start, or those
+  features silently fall back to their stubs.
 - **Don't use Node < 20.** The Bash tool snapshots PATH at session start; to use
   Node 20, prefix commands with
   `export NVM_DIR="$HOME/.nvm"; source "$NVM_DIR/nvm.sh"; nvm use 20 >/dev/null 2>&1;`
@@ -136,6 +163,21 @@ found`. Run `cd web && npm install` first, then type-check with
   health unless `wait_for_steady_state = true` (it isn't set), so a single full
   apply succeeds; the service just has no healthy task until you push an image
   and `update-service --force-new-deployment`. No need to stage the apply.
+- **Don't persist a host-split friend's picked identity.** A host-split
+  (`split_mode='host'`) share link is one link for the whole group — a shared
+  roster. `FriendSplit` must NOT save the "which one are you?" pick to
+  `localStorage`: that locks the device to the first person picked, so
+  reopening the link always skips straight to them. The pick is session-only;
+  the `localStorage` restore on load is gated to the claim flow
+  (`split_mode !== 'host'`).
+- **Show per-section feedback inside that section, not at the page top.**
+  `BillEditor` is a long scrolling page and its shared `error` state renders
+  near the top. An action whose control lives in a card far down the page
+  (e.g. the auto-split card) must show its own success/failure state _inside
+  that card_ — a top-of-page error is off-screen and the action looks like it
+  silently did nothing. For the same reason, don't replace the whole editor
+  with a full-screen processing view for an in-card action: it resets scroll
+  position; run the processing animation inside the card.
 
 ## Learned Patterns
 
@@ -154,7 +196,31 @@ NOT EXISTS` never alters an existing table, so a column added only to
   returns a clear `415` for unsupported formats.
 - **Receipt parsing is behind a `Parser` interface** (`internal/receipt`):
   `ClaudeParser` when an API key is set, `StubParser` otherwise — keeps the full
-  flow testable offline.
+  flow testable offline. `internal/transcribe` and `internal/autosplit` follow
+  the same key-or-stub pattern (`transcribe.New`, `autosplit.New`).
+- **Auto-split is an optional host-driven split mode.** A bill's `split_mode`
+  is `'claim'` (default — friends self-claim items) or `'host'`. Auto-splitting
+  is optional: a bill the host never auto-splits stays a normal claim bill.
+  The host describes the split either by **typing a prompt** or by **recording/
+  uploading audio**. Audio goes through `internal/transcribe` (Whisper
+  `WhisperTranscriber`, else `StubTranscriber`) to become text; a typed prompt
+  is used verbatim (no transcription). Either way the text plus the parsed
+  items goes to `internal/autosplit` (Claude `ClaudeAssigner`, else
+  `StubAssigner`), which maps them onto per-item people — referenced by 1-based
+  index, not UUID, so the model can't hallucinate IDs. The endpoint
+  `POST /api/bills/{id}/auto-split` (host-only) takes an `audio` file **or** a
+  `text` field, creates the named people as `participants`, writes `claims`,
+  and stores the text in `bills.split_prompt` — `split.Compute` is unchanged.
+  It is re-runnable: every `host_managed` participant and their claims are
+  replaced in one transaction.
+- **Host-managed participants vs self-joined.** `participants.host_managed`
+  flags people the host created via auto-split; `participants.is_host` flags
+  the host's own participant (shown for completeness — owes no payment to
+  themselves). For a `split_mode='host'` bill `handleJoinBill` rejects new
+  joins, and the summary exposes each `participant_token` (gated by the share
+  token) so a friend opens the link, picks their name, and pays without ever
+  self-claiming. The auto-split editor must run _after_ items are saved —
+  editing items afterward hits the `claims` foreign-key issue below.
 - **Payments are Venmo hand-offs.** The host saves a `venmo_handle` on their
   user row (set in the bill editor or on the Home page; new tabs reuse it).
   `POST /pay` returns a payment intent — the host's handle, the amount owed,
@@ -229,9 +295,24 @@ count)` shares — shares beyond the joined participants go to `unclaimed` so
 --cluster iou-cluster --service iou-service --force-new-deployment`. The
   `ANTHROPIC_API_KEY` lives in SSM Parameter Store as a `SecureString` (name
   `/iou/ANTHROPIC_API_KEY`), injected into the container by ECS — never in
-  Terraform state or the task definition. `IOU_DEV` is never set in prod. SES
+  Terraform state or the task definition. `OPENAI_API_KEY` (auto-split audio
+  transcription) lives in SSM the same way, as `/iou/OPENAI_API_KEY`, and is
+  injected into the container by ECS (task definition `iou:2` onward).
+  `IOU_DEV` is never set in prod. SES
   starts in sandbox mode (only verified recipient addresses receive mail);
   request production access to email arbitrary users.
+- **The Terraform state is not in the repo** — no remote backend, and no local
+  `terraform.tfstate` on the build machine. Routine redeploys don't need it
+  (build amd64 → push ECR → `update-service --force-new-deployment`), but
+  changing _managed infra_ does. `OPENAI_API_KEY` was wired in via the AWS CLI
+  directly — SSM SecureString `/iou/OPENAI_API_KEY`, the `iou-task-execution`
+  IAM policy, and task definition `iou:2` — with `deploy/terraform/` edited to
+  match. A future `terraform apply` that recovers state must first
+  `terraform import aws_ssm_parameter.openai_api_key /iou/OPENAI_API_KEY`, or
+  it conflicts with the already-existing parameter.
+- **Don't deploy to prod before the change is merged to `main`.** Build/push
+  the image and roll the ECS service only after the PR merges — production
+  runs merged code only.
 - **The verify page can race the auth bootstrap.** `AuthProvider`'s initial
   `GET /api/auth/me` (run unauthenticated on first paint) can resolve _after_
   `Verify` sets the user and clobber it back to `null`, bouncing to `/signin`.

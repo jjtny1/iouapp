@@ -27,9 +27,11 @@ Design notes:
   the service security group only accepts traffic from the ALB.
 - **Non-root container.** The image is distroless `nonroot` (uid/gid 65532).
   The EFS access point is pinned to that uid/gid so the app can write `/data`.
-- **Secret handling.** `ANTHROPIC_API_KEY` lives in SSM Parameter Store as a
-  SecureString and is injected into the container by ECS. Terraform creates the
-  parameter with a placeholder and never overwrites the value you set.
+- **Secret handling.** `ANTHROPIC_API_KEY` (receipt parsing + audio-split
+  assignment) and `OPENAI_API_KEY` (audio-split Whisper transcription) live in
+  SSM Parameter Store as SecureStrings and are injected into the container by
+  ECS. Terraform creates each parameter with a placeholder and never overwrites
+  the value you set.
 
 ## Prerequisites
 
@@ -81,9 +83,9 @@ The apply will:
 On the first apply the ECS task will fail to start because no image has been
 pushed to ECR yet — that is expected. Continue with the next steps.
 
-### 4. Set the real Anthropic API key in SSM
+### 4. Set the real API keys in SSM
 
-Terraform created the SSM parameter with a placeholder. Set the real value:
+Terraform created the SSM parameters with placeholders. Set the real values:
 
 ```bash
 aws ssm put-parameter \
@@ -91,10 +93,17 @@ aws ssm put-parameter \
   --type SecureString \
   --value "sk-ant-..." \
   --overwrite
+
+aws ssm put-parameter \
+  --name "/iou/OPENAI_API_KEY" \
+  --type SecureString \
+  --value "sk-proj-..." \
+  --overwrite
 ```
 
-(The parameter name is also in the `ssm_anthropic_key_parameter` output.)
-Terraform will not revert this — the resource has `ignore_changes = [value]`.
+Terraform will not revert these — each resource has `ignore_changes = [value]`.
+`OPENAI_API_KEY` is only needed for the audio-split feature; without it,
+transcription falls back to a stub.
 
 ### 5. Build and push the Docker image to ECR
 

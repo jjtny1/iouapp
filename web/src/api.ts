@@ -16,6 +16,11 @@ export interface BillItem {
 // across the diner headcount, "none" means there is no service charge.
 export type ServiceChargeKind = "none" | "percent" | "fixed";
 
+// split_mode is how a bill is divvied up: "claim" is the default — friends
+// open the share link and self-claim items; "host" means the host already
+// split it (via the audio-split flow) and friends only pick their name + pay.
+export type SplitMode = "claim" | "host";
+
 export interface Bill {
   id: string;
   restaurant: string;
@@ -26,6 +31,7 @@ export interface Bill {
   service_charge_rate_bps: number;
   service_charge_cents: number;
   service_charge_headcount: number;
+  split_mode: SplitMode;
   status: string;
   items: BillItem[];
   created_at: number;
@@ -52,6 +58,13 @@ export interface Participant {
   id: string;
   display_name: string;
   payment_status: PaymentStatus;
+  // host_managed marks a participant the host created via the audio split
+  // (rather than someone who joined themselves). is_host flags the host's own
+  // participant row. participant_token is the per-participant token a friend
+  // uses to pay — present only on participants of a split_mode === "host" bill.
+  host_managed?: boolean;
+  is_host?: boolean;
+  participant_token?: string;
 }
 
 // PaymentIntent is what the server hands a friend to settle in Venmo: the
@@ -110,6 +123,15 @@ export interface BillSummary {
   split: SplitResult;
 }
 
+// AutoSplitResult is what POST /auto-split returns: a full bill summary
+// (with the host-created participants + claims) plus the prompt the AI worked
+// from (a transcript of the audio, or the host's typed text used verbatim)
+// and Claude's notes about how it assigned items.
+export interface AutoSplitResult extends BillSummary {
+  prompt: string;
+  notes: string;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     credentials: "same-origin",
@@ -161,6 +183,33 @@ export const api = {
       throw new Error((body as { error?: string }).error ?? "upload failed");
     }
     return body as Bill;
+  },
+  // autoSplit sends the host's description of how the bill splits — either an
+  // audio recording or a typed text prompt — to the server, which transcribes
+  // audio (typed text is used verbatim), uses Claude to assign items to named
+  // people, creates participants + claims, and flips the bill to "host" split
+  // mode. Multipart, like uploadReceipt — no Content-Type header.
+  autoSplit: async (
+    id: string,
+    hostName: string,
+    input: { audio: File } | { text: string },
+  ): Promise<AutoSplitResult> => {
+    const form = new FormData();
+    form.append("host_name", hostName);
+    if ("audio" in input) form.append("audio", input.audio);
+    else form.append("text", input.text);
+    const res = await fetch(`/api/bills/${id}/auto-split`, {
+      method: "POST",
+      credentials: "same-origin",
+      body: form,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(
+        (body as { error?: string }).error ?? "auto-split failed",
+      );
+    }
+    return body as AutoSplitResult;
   },
   updateBill: (id: string, update: BillUpdate) =>
     request<Bill>(`/api/bills/${id}`, {

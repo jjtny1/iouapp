@@ -43,10 +43,15 @@ export default function FriendSplit() {
       .billByToken(token)
       .then((b) => {
         setBill(b);
-        const stored = localStorage.getItem(tokenKey(b.id));
-        if (stored) setParticipantToken(stored);
-        const storedId = localStorage.getItem(idKey(b.id));
-        if (storedId) setParticipantId(storedId);
+        // A host-split bill is a shared roster: every visitor should land on
+        // the identity picker and choose who they are, so its pick is never
+        // persisted. Only the self-claim flow restores a saved participant.
+        if (b.split_mode !== "host") {
+          const stored = localStorage.getItem(tokenKey(b.id));
+          if (stored) setParticipantToken(stored);
+          const storedId = localStorage.getItem(idKey(b.id));
+          if (storedId) setParticipantId(storedId);
+        }
       })
       .catch((err) =>
         setError(err instanceof Error ? err.message : "could not load bill"),
@@ -63,11 +68,13 @@ export default function FriendSplit() {
     }
   }, [bill, token]);
 
+  const isHostSplit = bill?.split_mode === "host";
+
   useEffect(() => {
     // refresh() is async — setState runs after the await, not synchronously.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (bill && participantToken) void refresh();
-  }, [bill, participantToken, refresh]);
+    if (bill && (participantToken || isHostSplit)) void refresh();
+  }, [bill, participantToken, isHostSplit, refresh]);
 
   async function onJoin(e: FormEvent) {
     e.preventDefault();
@@ -87,6 +94,23 @@ export default function FriendSplit() {
     } finally {
       setJoining(false);
     }
+  }
+
+  // pickIdentity is the host-split equivalent of joining: the friend taps
+  // their pre-created name and we adopt that participant's token for the
+  // existing payment flow. No new participant is created. The choice is
+  // session-only — deliberately not persisted — so reopening the link returns
+  // to the picker and a different person (or the same one) can pick.
+  function pickIdentity(pickedId: string, pToken: string) {
+    setParticipantToken(pToken);
+    setParticipantId(pickedId);
+  }
+
+  // clearIdentity drops the current host-split pick and returns to the picker.
+  function clearIdentity() {
+    setParticipantToken(null);
+    setParticipantId(null);
+    setError(null);
   }
 
   // myClaims reads this friend's current claims out of the summary as a map of
@@ -212,6 +236,196 @@ export default function FriendSplit() {
           <p className="body danger mt-6 center">
             {error ?? "This tab couldn't be found."}
           </p>
+        </div>
+      </PaperApp>
+    );
+  }
+
+  /* ── Host-split identity picker ──────────────────────────────────── */
+  // For a host-managed split the host already assigned items; the friend
+  // just taps which person they are, then pays. No self-claiming.
+  if (isHostSplit && !participantToken) {
+    if (!summary) {
+      return (
+        <PaperApp>
+          <div
+            className="page-center"
+            style={{ alignItems: "center", justifyContent: "center" }}
+          >
+            <Brand size={56} />
+            <p className="eyebrow mt-6">Loading the split…</p>
+          </div>
+        </PaperApp>
+      );
+    }
+    const fmtH = (c: number) => formatMoney(c, bill.currency);
+    const pickable = summary.participants.filter(
+      (p) => p.host_managed && !p.is_host,
+    );
+    const shareOf = (pid: string) =>
+      summary.split.participants.find((s) => s.participant_id === pid);
+    // "total split" recap — the sum the listed friends owe the host.
+    const listedTotal = pickable.reduce(
+      (sum, p) => sum + (shareOf(p.id)?.total_cents ?? 0),
+      0,
+    );
+    return (
+      <PaperApp>
+        <div className="page-center">
+          <p className="eyebrow" style={{ textAlign: "center" }}>
+            {bill.restaurant || "The tab"}
+          </p>
+          <h2
+            className="h-section mt-3"
+            style={{ textAlign: "center", fontSize: 38, lineHeight: 1.0 }}
+          >
+            Which one
+            <br />
+            are you?
+          </h2>
+          <p
+            className="body muted mt-3"
+            style={{
+              textAlign: "center",
+              fontSize: 13,
+              maxWidth: 240,
+              margin: "12px auto 0",
+            }}
+          >
+            The host already split this. Tap your name to pay.
+          </p>
+
+          {error && (
+            <p className="body danger center mt-3" style={{ fontSize: 13 }}>
+              {error}
+            </p>
+          )}
+
+          {pickable.length === 0 ? (
+            <p className="body muted center mt-6" style={{ fontSize: 13 }}>
+              No one to pick yet — check back once the host finishes.
+            </p>
+          ) : (
+            <>
+              {/* Single soft paper card with dashed perforations between
+                  names — a receipt's tab list. */}
+              <div
+                className="mt-6"
+                style={{
+                  background: "var(--paper)",
+                  borderRadius: 14,
+                  border: "1px solid rgba(31,61,43,.10)",
+                  overflow: "hidden",
+                  boxShadow: "0 8px 24px -14px rgba(31,61,43,.16)",
+                }}
+              >
+                {pickable.map((p, i) => {
+                  const share = shareOf(p.id);
+                  const paid = p.payment_status === "paid";
+                  const disabled = paid || !p.participant_token;
+                  const isLast = i === pickable.length - 1;
+                  return (
+                    <button
+                      key={p.id}
+                      disabled={disabled}
+                      onClick={() =>
+                        p.participant_token &&
+                        pickIdentity(p.id, p.participant_token)
+                      }
+                      style={{
+                        appearance: "none",
+                        border: 0,
+                        background: "transparent",
+                        width: "100%",
+                        padding: "14px 16px",
+                        borderBottom: isLast
+                          ? "0"
+                          : "1px dashed rgba(31,61,43,.18)",
+                        display: "grid",
+                        gridTemplateColumns: "auto 1fr auto auto",
+                        gap: 12,
+                        alignItems: "center",
+                        textAlign: "left",
+                        cursor: disabled ? "default" : "pointer",
+                        opacity: paid ? 0.5 : 1,
+                        transition: "background .15s ease",
+                        fontFamily: "inherit",
+                        color: "inherit",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!disabled)
+                          e.currentTarget.style.background =
+                            "rgba(31,61,43,.04)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = "transparent";
+                      }}
+                    >
+                      <Avatar name={p.display_name} seed={p.id} size="md" />
+                      <div style={{ minWidth: 0 }}>
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: 15,
+                            fontWeight: 500,
+                            color: "var(--ink)",
+                            textTransform: "lowercase",
+                            textDecoration: paid ? "line-through" : "none",
+                            textDecorationColor: "rgba(31,61,43,.4)",
+                            textDecorationThickness: "1px",
+                          }}
+                        >
+                          {p.display_name}
+                        </p>
+                        <p
+                          className="mono"
+                          style={{
+                            margin: "3px 0 0",
+                            fontSize: 10.5,
+                            color: paid ? "var(--muted)" : "var(--accent-deep)",
+                            letterSpacing: "0.04em",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {paid ? "paid ✓" : "tap to pay"}
+                        </p>
+                      </div>
+                      <span
+                        className="mono"
+                        style={{
+                          fontSize: 14,
+                          color: "var(--ink)",
+                          fontWeight: paid ? 400 : 600,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {fmtH(share?.total_cents ?? 0)}
+                      </span>
+                      <span style={{ display: "flex", opacity: 0.6 }}>
+                        <Icon.Arrow size={14} />
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Footer: total recap pinned to the bottom of the frame. */}
+              <p
+                className="mono"
+                style={{
+                  textAlign: "center",
+                  fontSize: 11,
+                  color: "var(--muted)",
+                  letterSpacing: "0.04em",
+                  marginTop: "auto",
+                  paddingTop: 18,
+                }}
+              >
+                total split ·{" "}
+                <span style={{ color: "var(--ink)" }}>{fmtH(listedTotal)}</span>
+              </p>
+            </>
+          )}
         </div>
       </PaperApp>
     );
@@ -416,7 +630,336 @@ export default function FriendSplit() {
           <p className="body muted center" style={{ fontSize: 12 }}>
             Paid in Venmo — you can close this page.
           </p>
+          {isHostSplit && (
+            <button
+              className="link-btn"
+              onClick={clearIdentity}
+              style={{ marginTop: 10, alignSelf: "center" }}
+            >
+              Not {firstName}? Pick someone else
+            </button>
+          )}
         </div>
+      </PaperApp>
+    );
+  }
+
+  /* ── Pay sheet (shared by both flows) ────────────────────────────── */
+  const paySheet = payOpen && (
+    <>
+      <div
+        className="sheet-backdrop"
+        onClick={() => !confirming && setPayOpen(false)}
+      />
+      <div className="sheet">
+        <div className="sheet-handle" />
+        <div className="row row-between">
+          <span className="eyebrow">Settle the tab</span>
+          <button
+            onClick={() => !confirming && setPayOpen(false)}
+            style={{
+              background: "transparent",
+              border: 0,
+              color: "var(--muted)",
+              fontSize: 16,
+              cursor: "pointer",
+            }}
+          >
+            ✕
+          </button>
+        </div>
+        <p className="h-section mt-2">Settle up.</p>
+
+        <div className="card mt-4">
+          <div className="row row-between">
+            <span className="body muted" style={{ fontSize: 13 }}>
+              Your items
+            </span>
+            <span className="mono" style={{ fontSize: 13 }}>
+              {fmt(myShare?.item_subtotal_cents ?? 0)}
+            </span>
+          </div>
+          <div className="row row-between mt-2">
+            <span className="body muted" style={{ fontSize: 13 }}>
+              Tax + tip
+            </span>
+            <span className="mono" style={{ fontSize: 13 }}>
+              {fmt((myShare?.tax_cents ?? 0) + (myShare?.tip_cents ?? 0))}
+            </span>
+          </div>
+          {(myShare?.service_cents ?? 0) > 0 && (
+            <div className="row row-between mt-2">
+              <span className="body muted" style={{ fontSize: 13 }}>
+                Service charge
+              </span>
+              <span className="mono" style={{ fontSize: 13 }}>
+                {fmt(myShare?.service_cents ?? 0)}
+              </span>
+            </div>
+          )}
+          <hr className="dash" style={{ margin: "10px 0" }} />
+          <div className="row row-between">
+            <span
+              style={{
+                fontFamily: "var(--serif)",
+                fontStyle: "italic",
+                fontSize: 20,
+              }}
+            >
+              Total
+            </span>
+            <span className="mono" style={{ fontSize: 19, fontWeight: 600 }}>
+              {fmt(owes)}
+            </span>
+          </div>
+        </div>
+
+        {loadingIntent ? (
+          <p className="body muted center mt-4" style={{ fontSize: 13 }}>
+            <span className="spinner" /> Preparing your Venmo payment…
+          </p>
+        ) : intent ? (
+          <>
+            {/* Venmo recipient */}
+            <div
+              className="mt-4"
+              style={{
+                background: "rgba(61,149,206,.12)",
+                borderRadius: 12,
+                padding: "12px 14px",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              <div
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 8,
+                  background: "#3D95CE",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#fff",
+                  fontWeight: 700,
+                  fontSize: 17,
+                }}
+              >
+                V
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 500 }}>
+                  Pay @{intent.venmo_handle} on Venmo
+                </p>
+                <p
+                  className="mono muted truncate"
+                  style={{ margin: "2px 0 0", fontSize: 10.5 }}
+                >
+                  {fmt(owes)} · {intent.note}
+                </p>
+              </div>
+            </div>
+
+            {isMobile ? (
+              <>
+                <button
+                  className="btn btn-block mt-4"
+                  style={{ padding: "14px 18px" }}
+                  onClick={openVenmo}
+                >
+                  Open Venmo <Icon.Arrow size={12} />
+                </button>
+                <p
+                  className="body muted center"
+                  style={{ fontSize: 11, marginTop: 8 }}
+                >
+                  Venmo opens prefilled with {fmt(owes)} to @
+                  {intent.venmo_handle}.
+                </p>
+              </>
+            ) : (
+              <div
+                className="mt-4"
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                }}
+              >
+                {/* The QR encodes the venmo:// app link so a phone
+                    camera opens it straight in the Venmo app; the web
+                    link below is the fallback for paying on the desktop
+                    itself, which has no app. */}
+                <QrCode value={intent.app_url} />
+                <p
+                  className="body muted center"
+                  style={{ fontSize: 11, marginTop: 8 }}
+                >
+                  Scan with your phone's camera to pay {fmt(owes)} in the Venmo
+                  app — or{" "}
+                  <a
+                    href={intent.web_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => setHandedOff(true)}
+                  >
+                    open Venmo on the web
+                  </a>
+                  .
+                </p>
+              </div>
+            )}
+
+            {error && (
+              <p className="body danger mt-3" style={{ fontSize: 12 }}>
+                {error}
+              </p>
+            )}
+
+            <hr className="dash" style={{ margin: "16px 0 12px" }} />
+            <p
+              className="body muted center"
+              style={{ fontSize: 12, marginBottom: 8 }}
+            >
+              {handedOff
+                ? "All done in Venmo? Mark yourself settled."
+                : "Already sent it in Venmo?"}
+            </p>
+            <button
+              className={`btn btn-block${handedOff ? "" : " btn-ghost"}`}
+              disabled={confirming}
+              onClick={confirmPay}
+            >
+              {confirming ? (
+                <>
+                  <span className="spinner" /> Saving…
+                </>
+              ) : (
+                <>
+                  <Icon.Check size={12} /> I've paid {fmt(owes)}
+                </>
+              )}
+            </button>
+          </>
+        ) : (
+          error && (
+            <p className="body danger mt-3" style={{ fontSize: 12 }}>
+              {error}
+            </p>
+          )
+        )}
+      </div>
+    </>
+  );
+
+  /* ── Host-split: pick-your-name flow has no claiming, just pay ───── */
+  if (isHostSplit) {
+    const myClaimedItems = myId
+      ? summary.items.filter((it) =>
+          (summary.claims[it.id] ?? []).some((e) => e.participant_id === myId),
+        )
+      : [];
+    return (
+      <PaperApp>
+        <div className="page" style={{ paddingBottom: 8 }}>
+          <div className="row row-between">
+            <Brand size={26} />
+            <Avatar name={myName} seed={myId ?? myName} />
+          </div>
+
+          <p className="eyebrow mt-4">
+            {bill.restaurant || "The tab"} · {summary.participants.length}{" "}
+            splitting
+          </p>
+          <h2 className="h-section mt-1">Here's your share, {firstName}.</h2>
+          <p className="body muted mt-2">
+            The host already split this tab — just settle up below.
+          </p>
+          <button
+            className="link-btn"
+            onClick={clearIdentity}
+            style={{ marginTop: 8 }}
+          >
+            Not {firstName}? Pick someone else
+          </button>
+
+          {error && (
+            <p className="body danger mt-3" style={{ fontSize: 13 }}>
+              {error}
+            </p>
+          )}
+
+          <div className="card mt-4">
+            <p className="eyebrow">Assigned to you</p>
+            {myClaimedItems.length === 0 ? (
+              <p className="body muted mt-2" style={{ fontSize: 13 }}>
+                No items were assigned to you — your share covers tax, tip and
+                any service charge.
+              </p>
+            ) : (
+              <div className="col mt-2">
+                {myClaimedItems.map((it) => {
+                  const claimers = summary.claims[it.id] ?? [];
+                  const ea =
+                    claimers.length > 0
+                      ? Math.round(it.price_cents / claimers.length)
+                      : it.price_cents;
+                  return (
+                    <div key={it.id} className="row row-between">
+                      <span style={{ fontSize: 14 }}>
+                        {it.name || "Item"}
+                        {claimers.length > 1 && (
+                          <span
+                            className="mono muted"
+                            style={{ fontSize: 10, marginLeft: 6 }}
+                          >
+                            split {claimers.length} ways
+                          </span>
+                        )}
+                      </span>
+                      <span className="mono" style={{ fontSize: 13 }}>
+                        {fmt(ea)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {serviceTotal > 0 && (
+            <div className="card mt-3">
+              <p className="eyebrow">Service charge</p>
+              <p className="body muted mt-2" style={{ fontSize: 12 }}>
+                This tab adds a{" "}
+                {bill.service_charge_kind === "percent"
+                  ? `${bill.service_charge_rate_bps / 100}% `
+                  : ""}
+                service charge of {fmt(serviceTotal)} — folded into your share
+                below.
+              </p>
+            </div>
+          )}
+
+          <div className="totalbar">
+            <div>
+              <p className="label">You owe</p>
+              <p className="amt">{fmt(owes)}</p>
+              {owes > 0 && extrasCents > 0 && (
+                <p className="sub">{owedBreakdown}</p>
+              )}
+            </div>
+            <button
+              className="btn btn-accent"
+              disabled={owes <= 0}
+              onClick={openPay}
+            >
+              Pay <Icon.Arrow size={12} />
+            </button>
+          </div>
+        </div>
+        {paySheet}
       </PaperApp>
     );
   }
@@ -594,217 +1137,7 @@ export default function FriendSplit() {
         </div>
       </div>
 
-      {/* Pay sheet */}
-      {payOpen && (
-        <>
-          <div
-            className="sheet-backdrop"
-            onClick={() => !confirming && setPayOpen(false)}
-          />
-          <div className="sheet">
-            <div className="sheet-handle" />
-            <div className="row row-between">
-              <span className="eyebrow">Settle the tab</span>
-              <button
-                onClick={() => !confirming && setPayOpen(false)}
-                style={{
-                  background: "transparent",
-                  border: 0,
-                  color: "var(--muted)",
-                  fontSize: 16,
-                  cursor: "pointer",
-                }}
-              >
-                ✕
-              </button>
-            </div>
-            <p className="h-section mt-2">Settle up.</p>
-
-            <div className="card mt-4">
-              <div className="row row-between">
-                <span className="body muted" style={{ fontSize: 13 }}>
-                  Your items
-                </span>
-                <span className="mono" style={{ fontSize: 13 }}>
-                  {fmt(myShare?.item_subtotal_cents ?? 0)}
-                </span>
-              </div>
-              <div className="row row-between mt-2">
-                <span className="body muted" style={{ fontSize: 13 }}>
-                  Tax + tip
-                </span>
-                <span className="mono" style={{ fontSize: 13 }}>
-                  {fmt((myShare?.tax_cents ?? 0) + (myShare?.tip_cents ?? 0))}
-                </span>
-              </div>
-              {(myShare?.service_cents ?? 0) > 0 && (
-                <div className="row row-between mt-2">
-                  <span className="body muted" style={{ fontSize: 13 }}>
-                    Service charge
-                  </span>
-                  <span className="mono" style={{ fontSize: 13 }}>
-                    {fmt(myShare?.service_cents ?? 0)}
-                  </span>
-                </div>
-              )}
-              <hr className="dash" style={{ margin: "10px 0" }} />
-              <div className="row row-between">
-                <span
-                  style={{
-                    fontFamily: "var(--serif)",
-                    fontStyle: "italic",
-                    fontSize: 20,
-                  }}
-                >
-                  Total
-                </span>
-                <span
-                  className="mono"
-                  style={{ fontSize: 19, fontWeight: 600 }}
-                >
-                  {fmt(owes)}
-                </span>
-              </div>
-            </div>
-
-            {loadingIntent ? (
-              <p className="body muted center mt-4" style={{ fontSize: 13 }}>
-                <span className="spinner" /> Preparing your Venmo payment…
-              </p>
-            ) : intent ? (
-              <>
-                {/* Venmo recipient */}
-                <div
-                  className="mt-4"
-                  style={{
-                    background: "rgba(61,149,206,.12)",
-                    borderRadius: 12,
-                    padding: "12px 14px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: 8,
-                      background: "#3D95CE",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      color: "#fff",
-                      fontWeight: 700,
-                      fontSize: 17,
-                    }}
-                  >
-                    V
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ margin: 0, fontSize: 13, fontWeight: 500 }}>
-                      Pay @{intent.venmo_handle} on Venmo
-                    </p>
-                    <p
-                      className="mono muted truncate"
-                      style={{ margin: "2px 0 0", fontSize: 10.5 }}
-                    >
-                      {fmt(owes)} · {intent.note}
-                    </p>
-                  </div>
-                </div>
-
-                {isMobile ? (
-                  <>
-                    <button
-                      className="btn btn-block mt-4"
-                      style={{ padding: "14px 18px" }}
-                      onClick={openVenmo}
-                    >
-                      Open Venmo <Icon.Arrow size={12} />
-                    </button>
-                    <p
-                      className="body muted center"
-                      style={{ fontSize: 11, marginTop: 8 }}
-                    >
-                      Venmo opens prefilled with {fmt(owes)} to @
-                      {intent.venmo_handle}.
-                    </p>
-                  </>
-                ) : (
-                  <div
-                    className="mt-4"
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                    }}
-                  >
-                    {/* The QR encodes the venmo:// app link so a phone
-                        camera opens it straight in the Venmo app; the web
-                        link below is the fallback for paying on the desktop
-                        itself, which has no app. */}
-                    <QrCode value={intent.app_url} />
-                    <p
-                      className="body muted center"
-                      style={{ fontSize: 11, marginTop: 8 }}
-                    >
-                      Scan with your phone's camera to pay {fmt(owes)} in the
-                      Venmo app — or{" "}
-                      <a
-                        href={intent.web_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={() => setHandedOff(true)}
-                      >
-                        open Venmo on the web
-                      </a>
-                      .
-                    </p>
-                  </div>
-                )}
-
-                {error && (
-                  <p className="body danger mt-3" style={{ fontSize: 12 }}>
-                    {error}
-                  </p>
-                )}
-
-                <hr className="dash" style={{ margin: "16px 0 12px" }} />
-                <p
-                  className="body muted center"
-                  style={{ fontSize: 12, marginBottom: 8 }}
-                >
-                  {handedOff
-                    ? "All done in Venmo? Mark yourself settled."
-                    : "Already sent it in Venmo?"}
-                </p>
-                <button
-                  className={`btn btn-block${handedOff ? "" : " btn-ghost"}`}
-                  disabled={confirming}
-                  onClick={confirmPay}
-                >
-                  {confirming ? (
-                    <>
-                      <span className="spinner" /> Saving…
-                    </>
-                  ) : (
-                    <>
-                      <Icon.Check size={12} /> I've paid {fmt(owes)}
-                    </>
-                  )}
-                </button>
-              </>
-            ) : (
-              error && (
-                <p className="body danger mt-3" style={{ fontSize: 12 }}>
-                  {error}
-                </p>
-              )
-            )}
-          </div>
-        </>
-      )}
+      {paySheet}
     </PaperApp>
   );
 }

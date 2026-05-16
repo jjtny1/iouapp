@@ -28,6 +28,14 @@ var migrations = []string{
 	// share_count lets a claim cover a fraction of an item: the claimer pays
 	// 1/share_count of it, so a dish can be shared among several friends.
 	`ALTER TABLE claims ADD COLUMN share_count INTEGER NOT NULL DEFAULT 1`,
+	// Host auto-split: split_mode is 'claim' (friends self-claim) or 'host'
+	// (the host described the split by audio or text and the AI assigned it).
+	// The host's description is kept on the bill as split_prompt, and the
+	// participants it creates are flagged host_managed (one is the host).
+	`ALTER TABLE bills ADD COLUMN split_mode TEXT NOT NULL DEFAULT 'claim'`,
+	`ALTER TABLE bills ADD COLUMN split_prompt TEXT`,
+	`ALTER TABLE participants ADD COLUMN host_managed INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE participants ADD COLUMN is_host INTEGER NOT NULL DEFAULT 0`,
 }
 
 type DB struct {
