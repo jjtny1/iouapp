@@ -156,6 +156,21 @@ iou:local` — a bare `-e NAME` forwards that var from your shell so keys
   health unless `wait_for_steady_state = true` (it isn't set), so a single full
   apply succeeds; the service just has no healthy task until you push an image
   and `update-service --force-new-deployment`. No need to stage the apply.
+- **Don't persist a host-split friend's picked identity.** A host-split
+  (`split_mode='host'`) share link is one link for the whole group — a shared
+  roster. `FriendSplit` must NOT save the "which one are you?" pick to
+  `localStorage`: that locks the device to the first person picked, so
+  reopening the link always skips straight to them. The pick is session-only;
+  the `localStorage` restore on load is gated to the claim flow
+  (`split_mode !== 'host'`).
+- **Show per-section feedback inside that section, not at the page top.**
+  `BillEditor` is a long scrolling page and its shared `error` state renders
+  near the top. An action whose control lives in a card far down the page
+  (e.g. the auto-split card) must show its own success/failure state _inside
+  that card_ — a top-of-page error is off-screen and the action looks like it
+  silently did nothing. For the same reason, don't replace the whole editor
+  with a full-screen processing view for an in-card action: it resets scroll
+  position; run the processing animation inside the card.
 
 ## Learned Patterns
 
