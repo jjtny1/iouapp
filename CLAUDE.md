@@ -21,7 +21,7 @@ and claim what they ordered, and each settles their prorated share.
 
 **Stack**: Go (`net/http` + SQLite via pure-Go `modernc.org/sqlite`) single
 binary that also serves the SPA; React + TypeScript + Vite frontend in `web/`.
-Packages: `internal/{api,auth,db,config,receipt,payment,split}`.
+Packages: `internal/{api,auth,db,config,receipt,transcribe,autosplit,payment,split}`.
 
 ## Commands
 
@@ -35,6 +35,9 @@ Packages: `internal/{api,auth,db,config,receipt,payment,split}`.
 
 Receipt parsing uses the Anthropic vision API and needs `ANTHROPIC_API_KEY`;
 without it the app falls back to `receipt.StubParser` (a fixed sample receipt).
+Audio-split transcription uses the OpenAI Whisper API and needs
+`OPENAI_API_KEY`; without it `transcribe.StubTranscriber` returns a fixed
+transcript.
 
 ---
 
@@ -66,6 +69,11 @@ IOU_DEV=1 PORT=8231 IOU_BASE_URL=http://localhost:8231 \
   The browser is still fine for verifying _rendered_ pages.
 - The receipt endpoint authorizes by host user id, so a fresh API login as the
   same email can upload to a bill a browser session created.
+- **Audio-split has the same upload constraint** (plus in-browser recording
+  needs a real mic). Drive `POST /api/bills/{id}/audio-split` via the API:
+  `curl -b cookies -F 'audio=@clip.m4a;type=audio/m4a' -F 'host_name=Sam' …`.
+  With no API keys the stub transcriber/assigner run, so the whole flow —
+  receipt parse, transcription, assignment — is testable offline.
 
 ---
 
@@ -79,6 +87,11 @@ IOU_DEV=1 PORT=8231 IOU_BASE_URL=http://localhost:8231 \
   programmatic uploads.
 - **Don't send HEIC to the Anthropic vision API.** It accepts only JPEG, PNG,
   GIF, and WebP. iPhone photos are HEIC and must be converted client-side first.
+- **Don't try to send audio to the Anthropic API.** It accepts only text,
+  images, and PDFs — there is no audio content block. The host's spoken split
+  must be transcribed to text first: the app does this with the OpenAI Whisper
+  API in `internal/transcribe`, then feeds the transcript to Claude in
+  `internal/autosplit`.
 - **Don't add VAT-inclusive tax as `tax_cents`.** `tax_cents` is tax _added on
   top_ of item prices (US-style sales tax). European VAT is already baked into
   the printed prices — often shown broken out into several rate lines (`VAT
@@ -90,8 +103,9 @@ IOU_DEV=1 PORT=8231 IOU_BASE_URL=http://localhost:8231 \
   equal the printed total it zeroes the tax, and logs any mismatch it can't
   explain. The invariant: item prices + tax + tip + service == printed total.
 - **Don't assume the Go server loads a `.env` file** — it does not. Pass
-  `ANTHROPIC_API_KEY` inline on every start, or parsing silently falls back to
-  the stub parser.
+  `ANTHROPIC_API_KEY` (receipt parsing + audio-split assignment) and
+  `OPENAI_API_KEY` (audio transcription) inline on every start, or those
+  features silently fall back to their stubs.
 - **Don't use Node < 20.** The Bash tool snapshots PATH at session start; to use
   Node 20, prefix commands with
   `export NVM_DIR="$HOME/.nvm"; source "$NVM_DIR/nvm.sh"; nvm use 20 >/dev/null 2>&1;`
@@ -147,7 +161,27 @@ NOT EXISTS` never alters an existing table, so a column added only to
   returns a clear `415` for unsupported formats.
 - **Receipt parsing is behind a `Parser` interface** (`internal/receipt`):
   `ClaudeParser` when an API key is set, `StubParser` otherwise — keeps the full
-  flow testable offline.
+  flow testable offline. `internal/transcribe` and `internal/autosplit` follow
+  the same key-or-stub pattern (`transcribe.New`, `autosplit.New`).
+- **Audio-split is a host-driven split mode.** A bill's `split_mode` is
+  `'claim'` (default — friends self-claim items) or `'host'`. In host mode the
+  host uploads or records audio describing the split: `internal/transcribe`
+  (Whisper `WhisperTranscriber`, else `StubTranscriber`) turns it into text,
+  then `internal/autosplit` (Claude `ClaudeAssigner`, else `StubAssigner`) maps
+  the transcript plus the parsed items onto per-item people — referenced by
+  1-based index, not UUID, so the model can't hallucinate IDs. The endpoint
+  `POST /api/bills/{id}/audio-split` (host-only) creates the named people as
+  `participants` and writes `claims`, so `split.Compute` is unchanged. It is
+  re-runnable: every `host_managed` participant and their claims are replaced
+  in one transaction.
+- **Host-managed participants vs self-joined.** `participants.host_managed`
+  flags people the host created via audio-split; `participants.is_host` flags
+  the host's own participant (shown for completeness — owes no payment to
+  themselves). For a `split_mode='host'` bill `handleJoinBill` rejects new
+  joins, and the summary exposes each `participant_token` (gated by the share
+  token) so a friend opens the link, picks their name, and pays without ever
+  self-claiming. The audio-split editor must run _after_ items are saved —
+  editing items afterward hits the `claims` foreign-key issue below.
 - **Payments are Venmo hand-offs.** The host saves a `venmo_handle` on their
   user row (set in the bill editor or on the Home page; new tabs reuse it).
   `POST /pay` returns a payment intent — the host's handle, the amount owed,
@@ -208,7 +242,10 @@ count)` shares — shares beyond the joined participants go to `unclaimed` so
 --cluster iou-cluster --service iou-service --force-new-deployment`. The
   `ANTHROPIC_API_KEY` lives in SSM Parameter Store as a `SecureString` (name
   `/iou/ANTHROPIC_API_KEY`), injected into the container by ECS — never in
-  Terraform state or the task definition. `IOU_DEV` is never set in prod. SES
+  Terraform state or the task definition. `OPENAI_API_KEY` (audio-split
+  transcription) belongs in SSM the same way, as `/iou/OPENAI_API_KEY` — adding
+  that parameter and its ECS injection is a pending deploy follow-up for the
+  audio-split feature. `IOU_DEV` is never set in prod. SES
   starts in sandbox mode (only verified recipient addresses receive mail);
   request production access to email arbitrary users.
 - **The verify page can race the auth bootstrap.** `AuthProvider`'s initial
