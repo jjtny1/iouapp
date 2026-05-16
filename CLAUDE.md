@@ -151,6 +151,32 @@ iou:local` — a bare `-e NAME` forwards that var from your shell so keys
   Apple Silicon Macs build arm64 images by default, but the Fargate task runs
   x86_64 — a native-arch image pushes fine, then the task dies on start with an
   `exec format error`. Always `docker build --platform linux/amd64 …`.
+- **Deploying from an Apple Silicon Mac: cross-compile — don't run the
+  in-Dockerfile amd64 build.** The repo `Dockerfile` compiles Go and the
+  frontend _inside_ `golang`/`node` build stages. Building it
+  `--platform linux/amd64` on an arm64 Mac runs those `RUN` steps under qemu
+  emulation, which reliably **stalls** — the build wedges at 0% CPU with no
+  output and never finishes. The fast, reliable path is to cross-compile on
+  the host and assemble a COPY-only image (no emulated `RUN` → builds in
+  seconds):
+  1. `cd web && npm run build` — the frontend is architecture-independent.
+  2. `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w"
+-o server ./cmd/server` — host Go matches `go.mod` (1.25.0), so the
+     binary is identical to the in-container build.
+  3. A minimal Dockerfile — `FROM gcr.io/distroless/static:nonroot`,
+     `WORKDIR /app`, `COPY server /app/server`, `COPY web/dist /app/web/dist`,
+     `EXPOSE 8080`, `USER nonroot:nonroot`, `ENTRYPOINT ["/app/server"]` —
+     built `--platform linux/amd64`. Put the binary, `web/dist`, and this
+     Dockerfile in a clean temp dir so the repo `.dockerignore` (which strips
+     `web/dist`) doesn't empty the build context.
+- **A stalled `docker build` is almost always Docker-VM disk pressure.** If a
+  build hangs at 0% CPU, run `docker system df` — dead containers and stale
+  image/cache layers fill the Docker Desktop VM disk and wedge BuildKit
+  mid-build. Clear it with `docker container prune -f && docker image prune
+-af && docker builder prune -af`, then rebuild. Killing a stuck
+  `docker build` may need `kill -9` — it sometimes ignores SIGTERM, and a
+  half-killed build left running concurrently with a retry makes the wedge
+  worse.
 - **Don't let `terraform apply` create the ECS service before an image exists
   in ECR — actually, it's fine.** `aws_ecs_service` does not wait for task
   health unless `wait_for_steady_state = true` (it isn't set), so a single full
