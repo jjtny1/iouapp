@@ -96,6 +96,13 @@ IOU_DEV=1 PORT=8231 IOU_BASE_URL=http://localhost:8231 \
   Node 20, prefix commands with
   `export NVM_DIR="$HOME/.nvm"; source "$NVM_DIR/nvm.sh"; nvm use 20 >/dev/null 2>&1;`
 - **Don't commit straight to `main`.** Branch first, then open a PR.
+- **Don't run `npx tsc` (or `npm run build`) in a fresh worktree before
+  `npm install`.** A new worktree has no `web/node_modules`; `npx tsc` then
+  silently downloads an unrelated registry package (it prints "This is not the
+  tsc command you are looking for") and `tsc -b` fails with `tsc: command not
+found`. Run `cd web && npm install` first, then type-check with
+  `./node_modules/.bin/tsc -p tsconfig.app.json --noEmit` — the local binary,
+  not `npx`.
 - **Don't rename the Go module path while other worktree branches are in
   flight.** Renaming `module` in `go.mod` rewrites every
   `import "github.com/jjtny1/splitit/..."` line repo-wide — it's all-or-nothing.
