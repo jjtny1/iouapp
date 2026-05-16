@@ -119,6 +119,15 @@ iou:local` — a bare `-e NAME` forwards that var from your shell so keys
   `ANTHROPIC_API_KEY` (receipt parsing + auto-split assignment) and
   `OPENAI_API_KEY` (audio transcription) inline on every start, or those
   features silently fall back to their stubs.
+- **Don't run with a placeholder or invalid API key.** The stub fallback
+  triggers only when the key env var is _empty or unset_. A non-empty but
+  bogus key (e.g. pasting `sk-ant-...your-key...` literally) makes the app
+  pick the _real_ `ClaudeParser`, which then 401s on every receipt. The user
+  just sees a generic "could not parse receipt"; the real cause shows only
+  in the server log — `bill receipt: parse: anthropic status 401`. So when a
+  receipt won't parse, **check the server log first** for the underlying
+  error. Either set a real key or leave the var fully unset — never a
+  placeholder.
 - **Don't use Node < 20.** The Bash tool snapshots PATH at session start; to use
   Node 20, prefix commands with
   `export NVM_DIR="$HOME/.nvm"; source "$NVM_DIR/nvm.sh"; nvm use 20 >/dev/null 2>&1;`
