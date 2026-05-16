@@ -39,10 +39,15 @@ export default function FriendSplit() {
       .billByToken(token)
       .then((b) => {
         setBill(b);
-        const stored = localStorage.getItem(tokenKey(b.id));
-        if (stored) setParticipantToken(stored);
-        const storedId = localStorage.getItem(idKey(b.id));
-        if (storedId) setParticipantId(storedId);
+        // A host-split bill is a shared roster: every visitor should land on
+        // the identity picker and choose who they are, so its pick is never
+        // persisted. Only the self-claim flow restores a saved participant.
+        if (b.split_mode !== "host") {
+          const stored = localStorage.getItem(tokenKey(b.id));
+          if (stored) setParticipantToken(stored);
+          const storedId = localStorage.getItem(idKey(b.id));
+          if (storedId) setParticipantId(storedId);
+        }
       })
       .catch((err) =>
         setError(err instanceof Error ? err.message : "could not load bill"),
@@ -89,13 +94,19 @@ export default function FriendSplit() {
 
   // pickIdentity is the host-split equivalent of joining: the friend taps
   // their pre-created name and we adopt that participant's token for the
-  // existing payment flow. No new participant is created.
-  function pickIdentity(participantId: string, pToken: string) {
-    if (!bill) return;
-    localStorage.setItem(tokenKey(bill.id), pToken);
-    localStorage.setItem(idKey(bill.id), participantId);
+  // existing payment flow. No new participant is created. The choice is
+  // session-only — deliberately not persisted — so reopening the link returns
+  // to the picker and a different person (or the same one) can pick.
+  function pickIdentity(pickedId: string, pToken: string) {
     setParticipantToken(pToken);
-    setParticipantId(participantId);
+    setParticipantId(pickedId);
+  }
+
+  // clearIdentity drops the current host-split pick and returns to the picker.
+  function clearIdentity() {
+    setParticipantToken(null);
+    setParticipantId(null);
+    setError(null);
   }
 
   async function toggleItem(itemId: string) {
@@ -496,6 +507,15 @@ export default function FriendSplit() {
           <p className="body muted center" style={{ fontSize: 12 }}>
             Paid in Venmo — you can close this page.
           </p>
+          {isHostSplit && (
+            <button
+              className="link-btn"
+              onClick={clearIdentity}
+              style={{ marginTop: 10, alignSelf: "center" }}
+            >
+              Not {firstName}? Pick someone else
+            </button>
+          )}
         </div>
       </PaperApp>
     );
@@ -733,6 +753,13 @@ export default function FriendSplit() {
           <p className="body muted mt-2">
             The host already split this tab — just settle up below.
           </p>
+          <button
+            className="link-btn"
+            onClick={clearIdentity}
+            style={{ marginTop: 8 }}
+          >
+            Not {firstName}? Pick someone else
+          </button>
 
           {error && (
             <p className="body danger mt-3" style={{ fontSize: 13 }}>
