@@ -141,7 +141,7 @@ found`. Run `cd web && npm install` first, then type-check with
   not `npx`.
 - **Don't rename the Go module path while other worktree branches are in
   flight.** Renaming `module` in `go.mod` rewrites every
-  `import "github.com/jjtny1/splitit/..."` line repo-wide — it's all-or-nothing.
+  `import "github.com/jjtny1/iouapp/..."` line repo-wide — it's all-or-nothing.
   Worktrees are isolated on disk so it won't break a sibling branch's build
   immediately, but at merge time it conflicts with every Go file another branch
   touched, and once it lands on `main` any branch still on the old path stops

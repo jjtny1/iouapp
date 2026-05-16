@@ -5,7 +5,7 @@ import (
 	"context"
 	"log"
 
-	"github.com/jjtny1/splitit/internal/config"
+	"github.com/jjtny1/iouapp/internal/config"
 )
 
 // Transcriber converts an audio file into a plain-text transcript.

@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jjtny1/splitit/internal/auth"
-	"github.com/jjtny1/splitit/internal/split"
+	"github.com/jjtny1/iouapp/internal/auth"
+	"github.com/jjtny1/iouapp/internal/split"
 )
 
 type participant struct {

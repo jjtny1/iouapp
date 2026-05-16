@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jjtny1/splitit/internal/auth"
-	"github.com/jjtny1/splitit/internal/payment"
+	"github.com/jjtny1/iouapp/internal/auth"
+	"github.com/jjtny1/iouapp/internal/payment"
 )
 
 type user struct {

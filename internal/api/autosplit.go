@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jjtny1/splitit/internal/auth"
-	"github.com/jjtny1/splitit/internal/autosplit"
+	"github.com/jjtny1/iouapp/internal/auth"
+	"github.com/jjtny1/iouapp/internal/autosplit"
 )
 
 // maxAudioBytes caps an uploaded audio recording. Whisper's own limit is 25MB.

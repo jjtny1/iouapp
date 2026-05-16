@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jjtny1/splitit/internal/money"
+	"github.com/jjtny1/iouapp/internal/money"
 )
 
 const (

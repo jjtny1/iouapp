@@ -13,9 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jjtny1/splitit/internal/auth"
-	"github.com/jjtny1/splitit/internal/config"
-	"github.com/jjtny1/splitit/internal/db"
+	"github.com/jjtny1/iouapp/internal/auth"
+	"github.com/jjtny1/iouapp/internal/config"
+	"github.com/jjtny1/iouapp/internal/db"
 )
 
 // testEnv is a fully wired IOU server backed by a fresh temp SQLite DB.

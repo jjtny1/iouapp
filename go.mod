@@ -1,4 +1,4 @@
-module github.com/jjtny1/splitit
+module github.com/jjtny1/iouapp
 
 go 1.25.0
 

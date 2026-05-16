@@ -3,7 +3,7 @@ package receipt
 import (
 	"log"
 
-	"github.com/jjtny1/splitit/internal/config"
+	"github.com/jjtny1/iouapp/internal/config"
 )
 
 // New selects a Parser based on configuration: ClaudeParser when an

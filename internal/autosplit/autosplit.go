@@ -7,7 +7,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/jjtny1/splitit/internal/config"
+	"github.com/jjtny1/iouapp/internal/config"
 )
 
 // Item is a single claimable line item presented to the assigner. Index is
