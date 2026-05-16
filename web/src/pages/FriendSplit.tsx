@@ -36,6 +36,10 @@ export default function FriendSplit() {
   const [loadingIntent, setLoadingIntent] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [handedOff, setHandedOff] = useState(false);
+  // Once paid, the friend lands on a terminal "settled up" screen. showSplit
+  // lets them step back to their own split view (via the IOU wordmark) so the
+  // page isn't a dead end — feedback was that there was no way out of it.
+  const [showSplit, setShowSplit] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -547,7 +551,7 @@ export default function FriendSplit() {
       : summary.participants.length;
 
   /* ── Paid ────────────────────────────────────────────────────────── */
-  if (isPaid) {
+  if (isPaid && !showSplit) {
     return (
       <PaperApp>
         <div
@@ -555,7 +559,7 @@ export default function FriendSplit() {
           style={{ paddingTop: 22, paddingBottom: 28 }}
         >
           <div className="row row-between">
-            <Brand size={26} />
+            <Brand size={26} onClick={() => setShowSplit(true)} />
             <span className="eyebrow">{bill.restaurant || "Tab"}</span>
           </div>
 
@@ -864,7 +868,10 @@ export default function FriendSplit() {
       <PaperApp>
         <div className="page" style={{ paddingBottom: 8 }}>
           <div className="row row-between">
-            <Brand size={26} />
+            <Brand
+              size={26}
+              onClick={isPaid ? () => setShowSplit(false) : undefined}
+            />
             <Avatar name={myName} seed={myId ?? myName} />
           </div>
 

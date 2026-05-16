@@ -233,9 +233,31 @@ export const Icon = {
 };
 
 /* ─── Brand wordmark ────────────────────────────────────────────────── */
-export function Brand({ size = 32 }: { size?: number }) {
+// Pass onClick to make the wordmark a tappable way out of a page — used as a
+// "back to your split" affordance on the friend's settled-up screen.
+export function Brand({
+  size = 32,
+  onClick,
+}: {
+  size?: number;
+  onClick?: () => void;
+}) {
+  const style: CSSProperties = { fontSize: size, lineHeight: 1 };
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        className="brand-mark brand-mark-btn"
+        style={style}
+        onClick={onClick}
+        aria-label="Back to your split"
+      >
+        IOU
+      </button>
+    );
+  }
   return (
-    <span className="brand-mark" style={{ fontSize: size, lineHeight: 1 }}>
+    <span className="brand-mark" style={style}>
       IOU
     </span>
   );

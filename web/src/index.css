@@ -118,6 +118,18 @@ a {
   color: var(--accent-deep);
   font-style: normal;
 }
+/* The wordmark as a button — a tappable "back to your split" affordance. */
+.brand-mark-btn {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  transition: opacity 0.12s ease;
+}
+.brand-mark-btn:active {
+  opacity: 0.55;
+}
 
 .eyebrow {
   font-family: var(--mono);
