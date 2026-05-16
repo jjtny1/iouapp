@@ -18,6 +18,9 @@ import (
 // maxAudioBytes caps an uploaded audio recording. Whisper's own limit is 25MB.
 const maxAudioBytes = 25 << 20
 
+// maxPromptChars caps a typed split prompt.
+const maxPromptChars = 4000
+
 // supportedAudioTypes are the media types the Whisper transcription API can
 // read. The check is lenient — a missing or generic type still passes via the
 // file-extension fallback (supportedAudioExts).
@@ -48,10 +51,15 @@ var supportedAudioExts = map[string]bool{
 	".mpga": true,
 }
 
-// handleAudioSplit transcribes a host's audio recording, maps it onto the
-// bill's items with the AI assigner, and replaces the host-managed
+// handleAutoSplit turns a host's description of how the bill splits — either
+// an audio recording (transcribed via Whisper) or a typed text prompt — into
+// per-item assignments with the AI assigner, then replaces the host-managed
 // participants and their claims so the existing split math runs unchanged.
-func (s *Server) handleAudioSplit(w http.ResponseWriter, r *http.Request) {
+//
+// Auto-splitting is optional at the product level: a bill the host never
+// auto-splits simply stays a normal claim bill where friends self-claim. This
+// endpoint is only reached once the host has actually supplied audio or text.
+func (s *Server) handleAutoSplit(w http.ResponseWriter, r *http.Request) {
 	u := r.Context().Value(userCtxKey).(user)
 	id := r.PathValue("id")
 
@@ -61,7 +69,7 @@ func (s *Server) handleAudioSplit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		log.Printf("audio split: load: %v", err)
+		log.Printf("auto split: load: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
@@ -71,17 +79,15 @@ func (s *Server) handleAudioSplit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxAudioBytes)
-	file, header, err := r.FormFile("audio")
-	if err != nil {
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "audio file too large"})
 			return
 		}
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "audio file required"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not read upload"})
 		return
 	}
-	defer file.Close()
 
 	hostName := strings.TrimSpace(r.FormValue("host_name"))
 	if hostName == "" {
@@ -89,36 +95,9 @@ func (s *Server) handleAudioSplit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	audio, err := io.ReadAll(file)
-	if err != nil {
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "audio file too large"})
-			return
-		}
-		log.Printf("audio split: read: %v", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not read upload"})
-		return
-	}
-
-	filename := header.Filename
-	if filename == "" {
-		filename = "audio"
-	}
-	mediaType := header.Header.Get("Content-Type")
-	base, _, _ := strings.Cut(mediaType, ";")
-	base = strings.TrimSpace(strings.ToLower(base))
-	ext := strings.ToLower(filepath.Ext(filename))
-	if !supportedAudioTypes[base] && !supportedAudioExts[ext] {
-		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{
-			"error": "unsupported audio type; upload an MP3, M4A, MP4, WAV, WebM, FLAC, or OGG file",
-		})
-		return
-	}
-
 	items, err := s.loadItems(r.Context(), b.ID)
 	if err != nil {
-		log.Printf("audio split: items: %v", err)
+		log.Printf("auto split: items: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
@@ -127,10 +106,9 @@ func (s *Server) handleAudioSplit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	transcript, err := s.Transcriber.Transcribe(r.Context(), audio, filename)
-	if err != nil {
-		log.Printf("audio split: transcribe: %v", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "could not transcribe audio"})
+	prompt, status, errMsg := s.resolveSplitPrompt(r)
+	if status != 0 {
+		writeJSON(w, status, map[string]string{"error": errMsg})
 		return
 	}
 
@@ -143,16 +121,16 @@ func (s *Server) handleAudioSplit(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	assignment, err := s.Assigner.Assign(r.Context(), splitItems, transcript, hostName)
+	assignment, err := s.Assigner.Assign(r.Context(), splitItems, prompt, hostName)
 	if err != nil {
-		log.Printf("audio split: assign: %v", err)
+		log.Printf("auto split: assign: %v", err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "could not assign items"})
 		return
 	}
 	assignment = autosplit.Validate(assignment, splitItems)
 
-	if err := s.applyAudioSplit(r, b, items, assignment, hostName, transcript); err != nil {
-		log.Printf("audio split: apply: %v", err)
+	if err := s.applyAutoSplit(r, b, items, assignment, hostName, prompt); err != nil {
+		log.Printf("auto split: apply: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
@@ -160,19 +138,63 @@ func (s *Server) handleAudioSplit(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.buildSummary(r.Context(), b)
 	if err != nil {
-		log.Printf("audio split: summary: %v", err)
+		log.Printf("auto split: summary: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-	resp["transcript"] = transcript
+	resp["prompt"] = prompt
 	resp["notes"] = assignment.Notes
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// applyAudioSplit replaces a bill's host-managed participants and their claims
+// resolveSplitPrompt extracts the host's description of the split as plain
+// text: an uploaded "audio" recording is transcribed via Whisper; otherwise a
+// typed "text" field is used verbatim. The request's multipart form must
+// already be parsed. status is 0 on success; otherwise it and errMsg carry
+// the HTTP error the caller should return.
+func (s *Server) resolveSplitPrompt(r *http.Request) (prompt string, status int, errMsg string) {
+	if file, header, err := r.FormFile("audio"); err == nil {
+		defer file.Close()
+		audio, rerr := io.ReadAll(file)
+		if rerr != nil {
+			log.Printf("auto split: read audio: %v", rerr)
+			return "", http.StatusBadRequest, "could not read upload"
+		}
+		filename := header.Filename
+		if filename == "" {
+			filename = "audio"
+		}
+		mediaType := header.Header.Get("Content-Type")
+		base, _, _ := strings.Cut(mediaType, ";")
+		base = strings.TrimSpace(strings.ToLower(base))
+		ext := strings.ToLower(filepath.Ext(filename))
+		if !supportedAudioTypes[base] && !supportedAudioExts[ext] {
+			return "", http.StatusUnsupportedMediaType,
+				"unsupported audio type; upload an MP3, M4A, MP4, WAV, WebM, FLAC, or OGG file"
+		}
+		transcript, terr := s.Transcriber.Transcribe(r.Context(), audio, filename)
+		if terr != nil {
+			log.Printf("auto split: transcribe: %v", terr)
+			return "", http.StatusBadGateway, "could not transcribe audio"
+		}
+		return transcript, 0, ""
+	}
+
+	// No audio part — fall back to a typed text prompt.
+	text := strings.TrimSpace(r.FormValue("text"))
+	if text == "" {
+		return "", http.StatusBadRequest, "describe the split by recording audio or writing a prompt"
+	}
+	if len(text) > maxPromptChars {
+		return "", http.StatusBadRequest, "prompt is too long"
+	}
+	return text, 0, ""
+}
+
+// applyAutoSplit replaces a bill's host-managed participants and their claims
 // with the ones from assignment, and flips the bill to host split mode — all
 // in a single transaction.
-func (s *Server) applyAudioSplit(r *http.Request, b bill, items []billItem, assignment autosplit.Assignment, hostName, transcript string) error {
+func (s *Server) applyAutoSplit(r *http.Request, b bill, items []billItem, assignment autosplit.Assignment, hostName, prompt string) error {
 	ctx := r.Context()
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -227,8 +249,8 @@ func (s *Server) applyAudioSplit(r *http.Request, b bill, items []billItem, assi
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE bills SET split_mode = 'host', audio_transcript = ? WHERE id = ?`,
-		transcript, b.ID); err != nil {
+		`UPDATE bills SET split_mode = 'host', split_prompt = ? WHERE id = ?`,
+		prompt, b.ID); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS bills (
     service_charge_headcount INTEGER NOT NULL DEFAULT 0,
     status                   TEXT NOT NULL DEFAULT 'draft',
     split_mode               TEXT NOT NULL DEFAULT 'claim',
-    audio_transcript         TEXT,
+    split_prompt             TEXT,
     friend_token             TEXT NOT NULL UNIQUE,
     created_at               INTEGER NOT NULL
 );

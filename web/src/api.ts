@@ -114,11 +114,12 @@ export interface BillSummary {
   split: SplitResult;
 }
 
-// AudioSplitResult is what POST /audio-split returns: a full bill summary
-// (with the host-created participants + claims) plus the Whisper transcript
+// AutoSplitResult is what POST /auto-split returns: a full bill summary
+// (with the host-created participants + claims) plus the prompt the AI worked
+// from (a transcript of the audio, or the host's typed text used verbatim)
 // and Claude's notes about how it assigned items.
-export interface AudioSplitResult extends BillSummary {
-  transcript: string;
+export interface AutoSplitResult extends BillSummary {
+  prompt: string;
   notes: string;
 }
 
@@ -174,19 +175,21 @@ export const api = {
     }
     return body as Bill;
   },
-  // audioSplit uploads a host's audio clip describing how the bill splits.
-  // The server transcribes it and uses Claude to assign items to named
-  // people, creating participants + claims, and flips the bill to "host"
-  // split mode. Multipart, like uploadReceipt — no Content-Type header.
-  audioSplit: async (
+  // autoSplit sends the host's description of how the bill splits — either an
+  // audio recording or a typed text prompt — to the server, which transcribes
+  // audio (typed text is used verbatim), uses Claude to assign items to named
+  // people, creates participants + claims, and flips the bill to "host" split
+  // mode. Multipart, like uploadReceipt — no Content-Type header.
+  autoSplit: async (
     id: string,
-    audio: File,
     hostName: string,
-  ): Promise<AudioSplitResult> => {
+    input: { audio: File } | { text: string },
+  ): Promise<AutoSplitResult> => {
     const form = new FormData();
-    form.append("audio", audio);
     form.append("host_name", hostName);
-    const res = await fetch(`/api/bills/${id}/audio-split`, {
+    if ("audio" in input) form.append("audio", input.audio);
+    else form.append("text", input.text);
+    const res = await fetch(`/api/bills/${id}/auto-split`, {
       method: "POST",
       credentials: "same-origin",
       body: form,
@@ -194,10 +197,10 @@ export const api = {
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(
-        (body as { error?: string }).error ?? "audio split failed",
+        (body as { error?: string }).error ?? "auto-split failed",
       );
     }
-    return body as AudioSplitResult;
+    return body as AutoSplitResult;
   },
   updateBill: (id: string, update: BillUpdate) =>
     request<Bill>(`/api/bills/${id}`, {

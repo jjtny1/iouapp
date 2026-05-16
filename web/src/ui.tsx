@@ -26,6 +26,22 @@ export const Icon = {
       <path d="M12 5v14M5 12h14" />
     </svg>
   ),
+  Pencil: ({ size = 16, ...p }: IconProps) => (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...p}
+    >
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  ),
   Camera: ({ size = 22, ...p }: IconProps) => (
     <svg
       viewBox="0 0 24 24"
