@@ -116,9 +116,11 @@ browser hits the Go server directly, no Vite proxy.
   a 500 the UI swallowed into a generic message. `read_console_messages` with
   `onlyErrors` catches frontend exceptions.
 - A full claim-aware flow with no API keys: create tab → "Enter items
-  manually" → Save → typed auto-split (StubAssigner names the people) → edit an
-  item → Save again. That last save is the regression check for editing a bill
-  that already has claims.
+  manually" → "Save & continue" (lands on the Split step) → "I'll split it up"
+  → typed auto-split (StubAssigner names the people) → "Continue" → Share step.
+  To re-test editing a bill that already has claims, jump back to **Review** via
+  the step bar, edit an item, and "Save & continue" again — that save is the
+  regression check for editing a bill with existing claims.
 
 ---
 
@@ -410,3 +412,27 @@ participant_id)` only and relies on the column's `DEFAULT 1`. That works
 failed` once claims existed.) Receipt re-upload still sends items with no id,
   so it replaces every item and cascade-clears their claims — re-parsing a
   receipt intentionally starts the split over.
+- **`BillEditor` is a four-step flow, not one long page.** A `step` state
+  (`"review" | "split" | "share"`) plus a `StepBar` walk the host through
+  Receipt → Review → Split → Share. The receipt upload/parse screens are step 1
+  (`Receipt`); the post-parse editor renders one step at a time. `Review` edits
+  the items and its only button, `saveAndContinue`, calls `onSave` then
+  advances — `onSave` returns a `boolean` so the advance is gated on a
+  successful save. `Split` opens on a **choice** (`splitView` state): "I'll
+  split it up" reveals the auto-split form, "My friends will choose" jumps
+  straight to `Share`. `Share` holds the Venmo handle, share link and Joined
+  list. The `StepBar` lets the host jump back to any reached step; steps past
+  Review need a saved bill (`bill.items.length > 0`). Don't reintroduce a
+  single-scroll editor — the stepped flow is the fix for testers finding the
+  old page confusing.
+- **Processing animations have a minimum on-screen time.** `ParsingView` and
+  `AutoSplitView` step through their messages **once and hold** on the last one
+  (no looping — looping read as frantic), and the calling handler holds the
+  animation a minimum ~1.6–1.8s via `holdFor(startedAt, min)` so a fast or
+  stubbed response doesn't flash the loading state past in a blink. Any new
+  processing/loading state should follow the same hold-and-don't-loop pattern.
+- **The `Brand` wordmark can double as a "back" affordance.** `Brand` (in
+  `ui.tsx`) takes an optional `onClick`; passing it renders the wordmark as a
+  button. `FriendSplit`'s settled-up screen uses this so the otherwise-terminal
+  "you're square" page isn't a dead end — the logo steps the friend back to
+  their split view (`showSplit` state toggles the `isPaid` early return).

@@ -154,3 +154,113 @@
   gap: 12px;
   padding: 8px 4px;
 }
+
+/* ─── Step progress bar (BillEditor) ────────────────────────────────── */
+/* Receipt → Review → Split → Share. The host's current place in the flow;
+   steps already reached are tappable to jump back. */
+.stepbar {
+  display: flex;
+  align-items: flex-start;
+}
+.stepbar-step {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  position: relative;
+}
+.stepbar-step:not(:disabled) {
+  cursor: pointer;
+}
+.stepbar-step:disabled {
+  cursor: default;
+}
+/* Connector lines run behind the dots, edge to centre on each side. */
+.stepbar-step::before,
+.stepbar-step::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  width: 50%;
+  height: 1px;
+  background: var(--line);
+}
+.stepbar-step::before {
+  left: 0;
+}
+.stepbar-step::after {
+  right: 0;
+}
+.stepbar-step:first-child::before,
+.stepbar-step:last-child::after {
+  display: none;
+}
+.stepbar-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--muted);
+  position: relative;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+.stepbar-step.is-done .stepbar-dot {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+.stepbar-step.is-current .stepbar-dot {
+  background: var(--accent);
+  border-color: var(--accent-deep);
+  color: var(--ink);
+}
+.stepbar-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.stepbar-step.is-done .stepbar-label,
+.stepbar-step.is-current .stepbar-label {
+  color: var(--ink);
+}
+
+/* ─── Choice cards (BillEditor split step) ──────────────────────────── */
+/* Two tappable cards — "I'll split it up" vs "my friends will choose". */
+.choice-card {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-align: left;
+  appearance: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    transform 0.12s ease;
+}
+.choice-card:hover {
+  border-color: var(--accent-deep);
+}
+.choice-card:active {
+  transform: scale(0.99);
+}
