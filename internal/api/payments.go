@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jjtny1/splitit/internal/payment"
-	"github.com/jjtny1/splitit/internal/split"
+	"github.com/jjtny1/iouapp/internal/payment"
+	"github.com/jjtny1/iouapp/internal/split"
 )
 
 // paymentRow mirrors a row of the payments table. The table also carries

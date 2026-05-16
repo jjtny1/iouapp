@@ -6,12 +6,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jjtny1/splitit/internal/auth"
-	"github.com/jjtny1/splitit/internal/autosplit"
-	"github.com/jjtny1/splitit/internal/config"
-	"github.com/jjtny1/splitit/internal/db"
-	"github.com/jjtny1/splitit/internal/receipt"
-	"github.com/jjtny1/splitit/internal/transcribe"
+	"github.com/jjtny1/iouapp/internal/auth"
+	"github.com/jjtny1/iouapp/internal/autosplit"
+	"github.com/jjtny1/iouapp/internal/config"
+	"github.com/jjtny1/iouapp/internal/db"
+	"github.com/jjtny1/iouapp/internal/receipt"
+	"github.com/jjtny1/iouapp/internal/transcribe"
 )
 
 type Server struct {

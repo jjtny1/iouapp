@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jjtny1/splitit/internal/auth"
-	"github.com/jjtny1/splitit/internal/money"
-	"github.com/jjtny1/splitit/internal/receipt"
+	"github.com/jjtny1/iouapp/internal/auth"
+	"github.com/jjtny1/iouapp/internal/money"
+	"github.com/jjtny1/iouapp/internal/receipt"
 )
 
 const maxReceiptBytes = 10 << 20

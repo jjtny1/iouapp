@@ -12,6 +12,6 @@ Then:
 
 - If the output shows a usage/validation error, tell the user and stop.
 - On success (status `Pending`), append the address to the pending-identities
-  line in `~/.claude/projects/-Users-Satoshi-go-src-github-com-jjtny1-splitit/memory/project_aws_deploy.md`.
+  line in `~/.claude/projects/-Users-Satoshi-go-src-github-com-jjtny1-iouapp/memory/project_aws_deploy.md`.
 - Confirm to the user: address submitted, status `Pending`, owner must click
   the AWS verification email.

@@ -10,10 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jjtny1/splitit/internal/api"
-	"github.com/jjtny1/splitit/internal/auth"
-	"github.com/jjtny1/splitit/internal/config"
-	"github.com/jjtny1/splitit/internal/db"
+	"github.com/jjtny1/iouapp/internal/api"
+	"github.com/jjtny1/iouapp/internal/auth"
+	"github.com/jjtny1/iouapp/internal/config"
+	"github.com/jjtny1/iouapp/internal/db"
 )
 
 func main() {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jjtny1/splitit/internal/config"
+	"github.com/jjtny1/iouapp/internal/config"
 )
 
 const bareJSON = `{"people":["Sam","Riley"],` +
