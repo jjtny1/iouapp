@@ -10,6 +10,17 @@ type Item struct {
 	TotalCents int
 }
 
+// Claim is one participant's claim on an item. ShareCount is the headcount the
+// claimer declared for sharing the dish: 1 means they take the whole item, N
+// means they pay 1/N of it. The claimer is never charged more than 1/N — but
+// if more people than N end up claiming the same item the denominator rises
+// to the claimer count, so the item is never over-collected. A ShareCount
+// below 1 is treated as 1.
+type Claim struct {
+	ParticipantID string `json:"participant_id"`
+	ShareCount    int    `json:"share_count"`
+}
+
 // Service charge kinds.
 const (
 	ServiceNone    = "none"
@@ -42,8 +53,8 @@ type Input struct {
 	TaxCents       int
 	TipCents       int
 	Service        ServiceCharge
-	Claims         map[string][]string // itemID -> participant IDs claiming it
-	ParticipantIDs []string            // every joined participant
+	Claims         map[string][]Claim // itemID -> the claims on it
+	ParticipantIDs []string           // every joined participant
 }
 
 // ParticipantShare is one participant's computed portion of the bill.
@@ -81,26 +92,16 @@ func Compute(in Input) Summary {
 
 	for _, it := range in.Items {
 		itemSubtotal += it.TotalCents
-		claimers := append([]string(nil), in.Claims[it.ID]...)
-		sort.Strings(claimers)
-		n := len(claimers)
-		if n == 0 {
-			continue
-		}
-		claimedSubtotal += it.TotalCents
-		base := it.TotalCents / n
-		rem := it.TotalCents % n
-		for i, pid := range claimers {
-			share := base
-			if i < rem {
-				share++
-			}
+		for pid, share := range splitItem(it.TotalCents, in.Claims[it.ID]) {
 			subtotals[pid] += share
+			claimedSubtotal += share
 		}
 	}
 
-	// unclaimed starts as the value of items nobody claimed; tax, tip and the
-	// service charge each add back the portion owed on those items.
+	// unclaimed starts as the item value no claimer covered — items nobody
+	// claimed, plus the uncovered fraction of a shared item whose declared
+	// headcount exceeds its claimer count. Tax, tip and the service charge
+	// each add back the portion owed on that uncovered value.
 	unclaimed := itemSubtotal - claimedSubtotal
 
 	// ids is every participant who claimed an item or joined the bill: a
@@ -151,6 +152,76 @@ func Compute(in Input) Summary {
 		ServiceChargeCents: serviceCents,
 		GrandTotalCents:    grand,
 	}
+}
+
+// splitItem allocates one item's price among the participants who claimed it.
+// Each claimer's effective denominator is max(ShareCount, claimer count): they
+// pay price/denominator. Because the denominator is never below the claimer
+// count the shares always sum to at most price; any uncovered remainder — a
+// shared dish whose declared headcount exceeds its claimers — is simply absent
+// from the result, and Compute attributes it to the unclaimed total.
+//
+// The largest-remainder method keeps the integer shares exact to the cent:
+// leftover pennies go to the largest fractional parts, with the uncovered
+// remainder as one extra bucket (id "") so it is never shortchanged. Ties
+// break by participant id.
+func splitItem(price int, claims []Claim) map[string]int {
+	shares := map[string]int{}
+	m := len(claims)
+	if m == 0 || price <= 0 {
+		return shares
+	}
+	sorted := append([]Claim(nil), claims...)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].ParticipantID < sorted[j].ParticipantID
+	})
+
+	// Each claimer is a bucket; the uncovered remainder (id "") is one more.
+	// whole is the floored cents, frac the fractional cent still owed.
+	type bucket struct {
+		id    string
+		whole int
+		frac  float64
+	}
+	buckets := make([]bucket, 0, m+1)
+	floored := 0
+	remainder := float64(price)
+	for _, c := range sorted {
+		d := c.ShareCount
+		if d < 1 {
+			d = 1
+		}
+		if d < m {
+			d = m
+		}
+		whole := price / d
+		buckets = append(buckets, bucket{
+			id:    c.ParticipantID,
+			whole: whole,
+			frac:  float64(price%d) / float64(d),
+		})
+		floored += whole
+		remainder -= float64(price) / float64(d)
+	}
+	uWhole := int(remainder)
+	buckets = append(buckets, bucket{id: "", whole: uWhole, frac: remainder - float64(uWhole)})
+	floored += uWhole
+
+	sort.SliceStable(buckets, func(i, j int) bool {
+		if buckets[i].frac != buckets[j].frac {
+			return buckets[i].frac > buckets[j].frac
+		}
+		return buckets[i].id < buckets[j].id
+	})
+	for i := 0; i < price-floored && i < len(buckets); i++ {
+		buckets[i].whole++
+	}
+	for _, b := range buckets {
+		if b.id != "" {
+			shares[b.id] = b.whole
+		}
+	}
+	return shares
 }
 
 // serviceTotal resolves a service charge to a cent amount: a percent charge is

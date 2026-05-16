@@ -335,6 +335,86 @@ func TestFriendFlowAndSummaryInvariant(t *testing.T) {
 	}
 }
 
+// TestSharedItemHeadcount drives the shared-dish flow end to end: a friend
+// claims an item declaring it shared three ways, and the summary charges them
+// a third with the rest left unclaimed.
+func TestSharedItemHeadcount(t *testing.T) {
+	e := newTestEnv(t)
+	host := e.signIn("host@example.com")
+
+	bill := e.createBill(host)
+	billID := bill["id"].(string)
+	friendToken := bill["friend_token"].(string)
+	e.uploadReceipt(host, billID, http.StatusOK, nil)
+
+	var friendBill map[string]any
+	e.doJSON(e.newClient(), http.MethodGet, "/api/by-token/"+friendToken,
+		nil, http.StatusOK, &friendBill)
+	itemsRaw, _ := friendBill["items"].([]any)
+	if len(itemsRaw) < 1 {
+		t.Fatalf("need >= 1 item, got %d", len(itemsRaw))
+	}
+	item0 := itemsRaw[0].(map[string]any)
+	item0ID := item0["id"].(string)
+	item0Price := int(item0["price_cents"].(float64))
+
+	// One friend joins and claims item 0 as a dish shared three ways.
+	var join struct {
+		Participant      struct{ ID string } `json:"participant"`
+		ParticipantToken string              `json:"participant_token"`
+	}
+	e.doJSON(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/participants",
+		map[string]string{"display_name": "Alice", "t": friendToken},
+		http.StatusCreated, &join)
+
+	e.doJSON(e.newClient(), http.MethodPut, "/api/bills/"+billID+"/claims",
+		map[string]any{
+			"participant_token": join.ParticipantToken,
+			"claims": []map[string]any{
+				{"item_id": item0ID, "share_count": 3},
+			},
+		}, http.StatusOK, nil)
+
+	var summary struct {
+		Claims map[string][]struct {
+			ParticipantID string `json:"participant_id"`
+			ShareCount    int    `json:"share_count"`
+		} `json:"claims"`
+		Split struct {
+			Participants []struct {
+				ParticipantID     string `json:"participant_id"`
+				ItemSubtotalCents int    `json:"item_subtotal_cents"`
+			} `json:"participants"`
+			UnclaimedCents int `json:"unclaimed_cents"`
+		} `json:"split"`
+	}
+	e.doJSON(e.newClient(), http.MethodGet,
+		"/api/bills/"+billID+"/summary?t="+friendToken, nil, http.StatusOK, &summary)
+
+	// The claim round-trips carrying its declared headcount.
+	got := summary.Claims[item0ID]
+	if len(got) != 1 || got[0].ShareCount != 3 {
+		t.Fatalf("claims[item0] = %+v, want one claim with share_count 3", got)
+	}
+
+	// Alice pays roughly a third of item 0; the rest stays unclaimed.
+	var aliceItems int
+	for _, p := range summary.Split.Participants {
+		if p.ParticipantID == join.Participant.ID {
+			aliceItems = p.ItemSubtotalCents
+		}
+	}
+	wantAlice := item0Price / 3
+	if aliceItems < wantAlice || aliceItems > wantAlice+1 {
+		t.Errorf("Alice item subtotal = %d, want ~%d (a third of %d)",
+			aliceItems, wantAlice, item0Price)
+	}
+	if uncovered := item0Price - aliceItems; summary.Split.UnclaimedCents < uncovered {
+		t.Errorf("unclaimed = %d, want >= %d (the uncovered share of item 0)",
+			summary.Split.UnclaimedCents, uncovered)
+	}
+}
+
 func TestAuthNegative(t *testing.T) {
 	e := newTestEnv(t)
 

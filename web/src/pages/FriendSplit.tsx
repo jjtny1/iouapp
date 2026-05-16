@@ -10,6 +10,10 @@ const isMobile =
   typeof navigator !== "undefined" &&
   /iphone|ipad|ipod|android/i.test(navigator.userAgent);
 
+// MAX_SHARE caps how many ways one dish can be declared shared; it mirrors the
+// server's clamp so the stepper never offers an amount the API would reject.
+const MAX_SHARE = 20;
+
 function tokenKey(billId: string): string {
   return `iou:participant:${billId}`;
 }
@@ -85,20 +89,51 @@ export default function FriendSplit() {
     }
   }
 
-  async function toggleItem(itemId: string) {
-    if (!bill || !participantToken || !summary || !participantId) return;
-    const current = new Set(
-      Object.entries(summary.claims)
-        .filter(([, ids]) => ids.includes(participantId))
-        .map(([cid]) => cid),
-    );
-    if (current.has(itemId)) current.delete(itemId);
-    else current.add(itemId);
+  // myClaims reads this friend's current claims out of the summary as a map of
+  // item_id -> share_count (the headcount they declared for sharing it).
+  function myClaims(): Map<string, number> {
+    const m = new Map<string, number>();
+    if (!summary || !participantId) return m;
+    for (const [itemId, entries] of Object.entries(summary.claims)) {
+      const mine = entries.find((e) => e.participant_id === participantId);
+      if (mine) m.set(itemId, mine.share_count);
+    }
+    return m;
+  }
+
+  // saveClaims posts the friend's whole claim set and stores the fresh summary.
+  async function saveClaims(claims: Map<string, number>) {
+    if (!bill || !participantToken) return;
     try {
-      setSummary(await api.setClaims(bill.id, participantToken, [...current]));
+      setSummary(
+        await api.setClaims(
+          bill.id,
+          participantToken,
+          [...claims].map(([item_id, share_count]) => ({
+            item_id,
+            share_count,
+          })),
+        ),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "could not update");
     }
+  }
+
+  // toggleItem claims an item (as a whole item, share_count 1) or drops it.
+  async function toggleItem(itemId: string) {
+    const claims = myClaims();
+    if (claims.has(itemId)) claims.delete(itemId);
+    else claims.set(itemId, 1);
+    await saveClaims(claims);
+  }
+
+  // setShareCount changes how many ways a claimed dish is split.
+  async function setShareCount(itemId: string, count: number) {
+    const claims = myClaims();
+    if (!claims.has(itemId)) return;
+    claims.set(itemId, Math.min(MAX_SHARE, Math.max(1, count)));
+    await saveClaims(claims);
   }
 
   async function openPay() {
@@ -388,7 +423,9 @@ export default function FriendSplit() {
 
   /* ── Claim (+ pay sheet) ─────────────────────────────────────────── */
   const anyClaim = myId
-    ? Object.values(summary.claims).some((ids) => ids.includes(myId))
+    ? Object.values(summary.claims).some((entries) =>
+        entries.some((e) => e.participant_id === myId),
+      )
     : false;
 
   return (
@@ -405,7 +442,7 @@ export default function FriendSplit() {
         </p>
         <h2 className="h-section mt-1">What did you get, {firstName}?</h2>
         <p className="body muted mt-2">
-          Tap each item. Shared things split evenly.
+          Tap what you ordered. Shared a dish? Set how many ways with ＋.
         </p>
 
         {error && (
@@ -435,64 +472,106 @@ export default function FriendSplit() {
         <div className="col mt-4">
           {summary.items.map((it) => {
             const claimers = summary.claims[it.id] ?? [];
-            const mine = myId ? claimers.includes(myId) : false;
+            const mineEntry = myId
+              ? claimers.find((c) => c.participant_id === myId)
+              : undefined;
+            const mine = !!mineEntry;
+            const myCount = mineEntry?.share_count ?? 1;
             const others = claimers
-              .filter((c) => c !== myId)
-              .map((c) => ({ id: c, name: nameOf(c) }));
-            const ea =
-              claimers.length > 0
-                ? Math.round(it.price_cents / claimers.length)
-                : it.price_cents;
+              .filter((c) => c.participant_id !== myId)
+              .map((c) => ({
+                id: c.participant_id,
+                name: nameOf(c.participant_id),
+              }));
+            // My effective denominator is never below the number of claimers,
+            // so this matches the share the server computes.
+            const denom = Math.max(myCount, claimers.length);
+            const youPay = Math.round(it.price_cents / denom);
             return (
-              <button
-                key={it.id}
-                className={`claim-item${mine ? " mine" : ""}`}
-                onClick={() => toggleItem(it.id)}
-              >
-                <span className={`claim-box${mine ? " checked" : ""}`}>
-                  <Icon.Check size={12} />
-                </span>
-                <div>
-                  <p style={{ margin: 0, fontSize: 14, color: "var(--ink)" }}>
-                    {it.name || "Item"}
-                  </p>
-                  {others.length > 0 && (
-                    <div className="row gap-1 mt-1">
-                      <AvatarStack people={others} size="xs" />
-                      {claimers.length > 1 && (
+              <div key={it.id} className={`claim-row${mine ? " mine" : ""}`}>
+                <button
+                  className="claim-item"
+                  onClick={() => toggleItem(it.id)}
+                >
+                  <span className={`claim-box${mine ? " checked" : ""}`}>
+                    <Icon.Check size={12} />
+                  </span>
+                  <div>
+                    <p style={{ margin: 0, fontSize: 14, color: "var(--ink)" }}>
+                      {it.name || "Item"}
+                    </p>
+                    {others.length > 0 && (
+                      <div className="row gap-1 mt-1">
+                        <AvatarStack people={others} size="xs" />
                         <span className="mono muted" style={{ fontSize: 10 }}>
-                          split {claimers.length} ways
+                          {others.length === 1
+                            ? `with ${others[0].name}`
+                            : `with ${others.length} others`}
                         </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <p
-                    className="mono"
-                    style={{
-                      margin: 0,
-                      fontSize: 13,
-                      color: "var(--ink)",
-                      fontWeight: mine ? 600 : 400,
-                    }}
-                  >
-                    {fmt(it.price_cents)}
-                  </p>
-                  {mine && claimers.length > 1 && (
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ textAlign: "right" }}>
                     <p
                       className="mono"
                       style={{
-                        margin: "2px 0 0",
-                        fontSize: 10,
-                        color: "var(--accent-deep)",
+                        margin: 0,
+                        fontSize: 13,
+                        color: "var(--ink)",
+                        fontWeight: mine ? 600 : 400,
                       }}
                     >
-                      you: {fmt(ea)}
+                      {fmt(it.price_cents)}
                     </p>
-                  )}
-                </div>
-              </button>
+                    {mine && denom > 1 && (
+                      <p
+                        className="mono"
+                        style={{
+                          margin: "2px 0 0",
+                          fontSize: 10,
+                          color: "var(--accent-deep)",
+                        }}
+                      >
+                        you: {fmt(youPay)}
+                      </p>
+                    )}
+                  </div>
+                </button>
+                {mine && (
+                  <div className="share-stepper">
+                    <span className="share-stepper-label">
+                      {denom > 1
+                        ? `Split ${denom} ways`
+                        : "Just you — tap ＋ to share"}
+                    </span>
+                    <div
+                      className="stepper"
+                      role="group"
+                      aria-label="how many ways shared"
+                    >
+                      <button
+                        type="button"
+                        className="step-btn"
+                        disabled={myCount <= 1}
+                        aria-label="fewer people"
+                        onClick={() => setShareCount(it.id, myCount - 1)}
+                      >
+                        −
+                      </button>
+                      <span className="step-val mono">{myCount}</span>
+                      <button
+                        type="button"
+                        className="step-btn"
+                        disabled={myCount >= MAX_SHARE}
+                        aria-label="more people"
+                        onClick={() => setShareCount(it.id, myCount + 1)}
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>

@@ -10,10 +10,23 @@ func sumItems(items []Item) int {
 	return s
 }
 
+// evenClaims converts the concise itemID->participantIDs test form into the
+// engine's []Claim form. Every claim gets ShareCount 1, so each item splits
+// evenly across its claimers — the behaviour before headcount sharing existed.
+func evenClaims(m map[string][]string) map[string][]Claim {
+	out := map[string][]Claim{}
+	for itemID, ids := range m {
+		for _, id := range ids {
+			out[itemID] = append(out[itemID], Claim{ParticipantID: id, ShareCount: 1})
+		}
+	}
+	return out
+}
+
 // compute runs Compute for the common tax/tip-only case (no service charge,
 // participants derived from claims), keeping the older tests concise.
 func compute(items []Item, tax, tip int, claims map[string][]string) Summary {
-	return Compute(Input{Items: items, TaxCents: tax, TipCents: tip, Claims: claims})
+	return Compute(Input{Items: items, TaxCents: tax, TipCents: tip, Claims: evenClaims(claims)})
 }
 
 // checkInvariant asserts each participant's total is the sum of its parts and
@@ -176,7 +189,7 @@ func TestServicePercentProration(t *testing.T) {
 	sum := Compute(Input{
 		Items:          items,
 		Service:        ServiceCharge{Kind: ServicePercent, RateBps: 1000}, // 10%
-		Claims:         map[string][]string{"i1": {"a"}, "i2": {"b"}},
+		Claims:         evenClaims(map[string][]string{"i1": {"a"}, "i2": {"b"}}),
 		ParticipantIDs: []string{"a", "b"},
 	})
 	checkInvariant(t, "percent proration", items, 0, 0, sum)
@@ -197,7 +210,7 @@ func TestServicePercentRoundsHalfUp(t *testing.T) {
 	sum := Compute(Input{
 		Items:          items,
 		Service:        ServiceCharge{Kind: ServicePercent, RateBps: 1250},
-		Claims:         map[string][]string{"i1": {"a"}},
+		Claims:         evenClaims(map[string][]string{"i1": {"a"}}),
 		ParticipantIDs: []string{"a"},
 	})
 	checkInvariant(t, "percent rounding", items, 0, 0, sum)
@@ -213,7 +226,7 @@ func TestServicePercentAllUnclaimed(t *testing.T) {
 	sum := Compute(Input{
 		Items:   items,
 		Service: ServiceCharge{Kind: ServicePercent, RateBps: 1000},
-		Claims:  map[string][]string{},
+		Claims:  evenClaims(map[string][]string{}),
 	})
 	checkInvariant(t, "percent unclaimed", items, 0, 0, sum)
 	if sum.UnclaimedCents != 1100 {
@@ -228,7 +241,7 @@ func TestServiceFixedEvenSplit(t *testing.T) {
 	sum := Compute(Input{
 		Items:          items,
 		Service:        ServiceCharge{Kind: ServiceFixed, FixedCents: 1200},
-		Claims:         map[string][]string{"i1": {"a"}},
+		Claims:         evenClaims(map[string][]string{"i1": {"a"}}),
 		ParticipantIDs: []string{"a", "b", "c"},
 	})
 	checkInvariant(t, "fixed even", items, 0, 0, sum)
@@ -249,7 +262,7 @@ func TestServiceFixedHeadcountGap(t *testing.T) {
 	sum := Compute(Input{
 		Items:          items,
 		Service:        ServiceCharge{Kind: ServiceFixed, FixedCents: 1200, Headcount: 4},
-		Claims:         map[string][]string{"i1": {"a"}},
+		Claims:         evenClaims(map[string][]string{"i1": {"a"}}),
 		ParticipantIDs: []string{"a", "b"},
 	})
 	checkInvariant(t, "fixed headcount gap", items, 0, 0, sum)
@@ -289,7 +302,7 @@ func TestServiceFixedNoParticipants(t *testing.T) {
 	sum := Compute(Input{
 		Items:   items,
 		Service: ServiceCharge{Kind: ServiceFixed, FixedCents: 1000},
-		Claims:  map[string][]string{},
+		Claims:  evenClaims(map[string][]string{}),
 	})
 	checkInvariant(t, "fixed no participants", items, 0, 0, sum)
 	if sum.UnclaimedCents != 1500 {
@@ -311,7 +324,7 @@ func TestPartialClaimChargesOnlyClaimedItems(t *testing.T) {
 		TaxCents:       200,
 		TipCents:       100,
 		Service:        ServiceCharge{Kind: ServicePercent, RateBps: 1000}, // 10%
-		Claims:         map[string][]string{"i1": {"a"}},
+		Claims:         evenClaims(map[string][]string{"i1": {"a"}}),
 		ParticipantIDs: []string{"a"},
 	})
 	checkInvariant(t, "partial claim", items, 200, 100, sum)
@@ -333,5 +346,111 @@ func TestPartialClaimChargesOnlyClaimedItems(t *testing.T) {
 	// 100 tax + 50 tip + 500 service.
 	if sum.UnclaimedCents != 5650 {
 		t.Errorf("unclaimed = %d, want 5650", sum.UnclaimedCents)
+	}
+}
+
+// TestSharedHeadcountLoneClaimer is the first-tapper case: one friend claims a
+// $30 dish as "shared 3 ways" before anyone else has joined. They owe a third
+// immediately; the other two thirds stay unclaimed until the others claim it.
+func TestSharedHeadcountLoneClaimer(t *testing.T) {
+	items := []Item{{ID: "i1", TotalCents: 3000}}
+	sum := Compute(Input{
+		Items:  items,
+		Claims: map[string][]Claim{"i1": {{ParticipantID: "a", ShareCount: 3}}},
+	})
+	checkInvariant(t, "lone headcount", items, 0, 0, sum)
+	if got := participant(sum, "a").ItemSubtotalCents; got != 1000 {
+		t.Errorf("a = %d, want 1000 (1/3 of 3000)", got)
+	}
+	if sum.UnclaimedCents != 2000 {
+		t.Errorf("unclaimed = %d, want 2000 (the other 2/3)", sum.UnclaimedCents)
+	}
+}
+
+// TestSharedHeadcountAllPresent: all three sharers claim the dish as "3 ways",
+// so it is fully covered, a third each.
+func TestSharedHeadcountAllPresent(t *testing.T) {
+	items := []Item{{ID: "i1", TotalCents: 3000}}
+	sum := Compute(Input{
+		Items: items,
+		Claims: map[string][]Claim{"i1": {
+			{ParticipantID: "a", ShareCount: 3},
+			{ParticipantID: "b", ShareCount: 3},
+			{ParticipantID: "c", ShareCount: 3},
+		}},
+	})
+	checkInvariant(t, "all headcount", items, 0, 0, sum)
+	for _, id := range []string{"a", "b", "c"} {
+		if got := participant(sum, id).ItemSubtotalCents; got != 1000 {
+			t.Errorf("%s = %d, want 1000", id, got)
+		}
+	}
+	if sum.UnclaimedCents != 0 {
+		t.Errorf("unclaimed = %d, want 0", sum.UnclaimedCents)
+	}
+}
+
+// TestSharedHeadcountNeverOvercollects: three friends each claim the dish but
+// each declared only "2 ways". The effective denominator rises to the claimer
+// count (3), so the item collects exactly its price, never more.
+func TestSharedHeadcountNeverOvercollects(t *testing.T) {
+	items := []Item{{ID: "i1", TotalCents: 3000}}
+	sum := Compute(Input{
+		Items: items,
+		Claims: map[string][]Claim{"i1": {
+			{ParticipantID: "a", ShareCount: 2},
+			{ParticipantID: "b", ShareCount: 2},
+			{ParticipantID: "c", ShareCount: 2},
+		}},
+	})
+	checkInvariant(t, "no overcollect", items, 0, 0, sum)
+	for _, id := range []string{"a", "b", "c"} {
+		if got := participant(sum, id).ItemSubtotalCents; got != 1000 {
+			t.Errorf("%s = %d, want 1000 (denominator clamped up to 3)", id, got)
+		}
+	}
+	if sum.UnclaimedCents != 0 {
+		t.Errorf("unclaimed = %d, want 0", sum.UnclaimedCents)
+	}
+}
+
+// TestSharedHeadcountNeverChargedMoreThanDeclared: a claimer who declares "4
+// ways" pays at most a quarter even if fewer people end up on the dish.
+func TestSharedHeadcountNeverChargedMoreThanDeclared(t *testing.T) {
+	items := []Item{{ID: "i1", TotalCents: 1000}}
+	sum := Compute(Input{
+		Items: items,
+		Claims: map[string][]Claim{"i1": {
+			{ParticipantID: "a", ShareCount: 4},
+			{ParticipantID: "b", ShareCount: 4},
+		}},
+	})
+	checkInvariant(t, "declared cap", items, 0, 0, sum)
+	for _, id := range []string{"a", "b"} {
+		if got := participant(sum, id).ItemSubtotalCents; got != 250 {
+			t.Errorf("%s = %d, want 250 (1/4, their declared share)", id, got)
+		}
+	}
+	if sum.UnclaimedCents != 500 {
+		t.Errorf("unclaimed = %d, want 500", sum.UnclaimedCents)
+	}
+}
+
+// TestSharedHeadcountProratesTax: tax follows the headcount-reduced item
+// subtotal — a friend who paid a third of a dish pays a third of its tax.
+func TestSharedHeadcountProratesTax(t *testing.T) {
+	items := []Item{{ID: "i1", TotalCents: 3000}}
+	sum := Compute(Input{
+		Items:    items,
+		TaxCents: 300,
+		Claims:   map[string][]Claim{"i1": {{ParticipantID: "a", ShareCount: 3}}},
+	})
+	checkInvariant(t, "headcount tax", items, 300, 0, sum)
+	a := participant(sum, "a")
+	if a.TaxCents != 100 {
+		t.Errorf("a tax = %d, want 100 (1/3 of 300)", a.TaxCents)
+	}
+	if sum.UnclaimedCents != 2200 {
+		t.Errorf("unclaimed = %d, want 2200 (2000 item + 200 tax)", sum.UnclaimedCents)
 	}
 }

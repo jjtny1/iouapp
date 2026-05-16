@@ -25,6 +25,9 @@ var migrations = []string{
 	// identity. The legacy wallet_address column is left in place on existing
 	// databases — nothing reads it — so no drop migration is needed.
 	`ALTER TABLE users ADD COLUMN venmo_handle TEXT`,
+	// share_count lets a claim cover a fraction of an item: the claimer pays
+	// 1/share_count of it, so a dish can be shared among several friends.
+	`ALTER TABLE claims ADD COLUMN share_count INTEGER NOT NULL DEFAULT 1`,
 }
 
 type DB struct {

@@ -195,6 +195,20 @@ count)` shares — shares beyond the joined participants go to `unclaimed` so
   each friend claim their own unit (e.g. two people each pick one of two
   Cokes) instead of sharing a single multi-quantity checkbox. The `items`
   table has no `qty` column.
+- **A claim carries a `share_count` for splitting a shared dish.** `claims`
+  has a `share_count` column (default 1): a friend who taps an item declares
+  how many ways it's shared with the headcount stepper, and pays `1/N` of it.
+  `split.splitItem` gives each claimer an _effective denominator_ of
+  `max(share_count, claimer count)`, which is the elegant load-bearing rule:
+  it is never below the claimer count, so the item never over-collects and a
+  lone first-tapper who sets "3 ways" is charged a third immediately (the rest
+  stays unclaimed); when nobody sets a count it collapses to the old implicit
+  even split (`max(1, m) == m`). A claimer is never charged more than the
+  `1/N` they declared. The split engine takes `[]split.Claim`
+  (`{ParticipantID, ShareCount}`), not bare participant IDs. The
+  `PUT …/claims` API accepts the current `claims:[{item_id,share_count}]`
+  shape and still the legacy `item_ids:[…]` (each an implicit count of 1);
+  `share_count` is server-clamped to `[1, 20]`.
 - **Auth is magic-link.** In `IOU_DEV=1` the link is returned in the JSON
   response. In prod it is emailed: `NewRouter` takes an `auth.EmailSender`,
   chosen by `IOU_MAIL_PROVIDER` — a log-only sender by default, or `SESSender`

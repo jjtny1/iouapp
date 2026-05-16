@@ -93,11 +93,20 @@ export interface SplitResult {
   grand_total_cents: number;
 }
 
+// ClaimEntry is one friend's claim on an item. share_count is the headcount
+// they declared for sharing the dish: they pay 1/share_count of it. Their
+// share never drops below 1/(number of claimers), so an item is never
+// over-collected even if the declared counts disagree.
+export interface ClaimEntry {
+  participant_id: string;
+  share_count: number;
+}
+
 export interface BillSummary {
   bill: Bill;
   items: BillItem[];
   participants: Participant[];
-  claims: Record<string, string[]>;
+  claims: Record<string, ClaimEntry[]>;
   split: SplitResult;
 }
 
@@ -182,10 +191,16 @@ export const api = {
         body: JSON.stringify({ display_name, t }),
       },
     ),
-  setClaims: (id: string, participant_token: string, item_ids: string[]) =>
+  // setClaims replaces a friend's claims. Each claim carries a share_count —
+  // the headcount for a shared dish (1 means the friend takes the whole item).
+  setClaims: (
+    id: string,
+    participant_token: string,
+    claims: { item_id: string; share_count: number }[],
+  ) =>
     request<BillSummary>(`/api/bills/${id}/claims`, {
       method: "PUT",
-      body: JSON.stringify({ participant_token, item_ids }),
+      body: JSON.stringify({ participant_token, claims }),
     }),
   summary: (id: string, token?: string) =>
     request<BillSummary>(
