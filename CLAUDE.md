@@ -74,6 +74,17 @@ IOU_DEV=1 PORT=8231 IOU_BASE_URL=http://localhost:8231 \
   `curl -b cookies -F 'audio=@clip.m4a;type=audio/m4a' -F 'host_name=Sam' …`.
   With no API keys the stub transcriber/assigner run, so the whole flow —
   receipt parse, transcription, assignment — is testable offline.
+- **Make a test audio clip with macOS `say`.** `say -o /tmp/c.aiff "I had the
+burger and an iced tea"` then `afconvert -f m4af -d aac /tmp/c.aiff
+/tmp/c.m4a` produces a real `m4a` that Whisper transcribes — handy for
+  exercising audio-split end to end.
+- **Running the built Docker image locally** is the closest test to prod.
+  Build _native_ — NOT `--platform linux/amd64`, that is only for the Fargate
+  push: `docker build -t iou:local .`. Then `docker run --rm -p 8080:8080 -e
+IOU_DEV=1 -e IOU_DB=/tmp/iou.db -e ANTHROPIC_API_KEY -e OPENAI_API_KEY
+iou:local` — a bare `-e NAME` forwards that var from your shell so keys
+  never hit the command line. `IOU_DB` must sit under `/tmp`: the distroless
+  `nonroot` user cannot write `/app`, and the file is ephemeral per run.
 
 ---
 
@@ -248,6 +259,18 @@ count)` shares — shares beyond the joined participants go to `unclaimed` so
   `IOU_DEV` is never set in prod. SES
   starts in sandbox mode (only verified recipient addresses receive mail);
   request production access to email arbitrary users.
+- **The Terraform state is not in the repo** — no remote backend, and no local
+  `terraform.tfstate` on the build machine. Routine redeploys don't need it
+  (build amd64 → push ECR → `update-service --force-new-deployment`), but
+  changing _managed infra_ does. `OPENAI_API_KEY` was wired in via the AWS CLI
+  directly — SSM SecureString `/iou/OPENAI_API_KEY`, the `iou-task-execution`
+  IAM policy, and task definition `iou:2` — with `deploy/terraform/` edited to
+  match. A future `terraform apply` that recovers state must first
+  `terraform import aws_ssm_parameter.openai_api_key /iou/OPENAI_API_KEY`, or
+  it conflicts with the already-existing parameter.
+- **Don't deploy to prod before the change is merged to `main`.** Build/push
+  the image and roll the ECS service only after the PR merges — production
+  runs merged code only.
 - **The verify page can race the auth bootstrap.** `AuthProvider`'s initial
   `GET /api/auth/me` (run unauthenticated on first paint) can resolve _after_
   `Verify` sets the user and clobber it back to `null`, bouncing to `/signin`.
