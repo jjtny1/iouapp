@@ -227,26 +227,37 @@ export default function FriendSplit() {
     const pickable = summary.participants.filter(
       (p) => p.host_managed && !p.is_host,
     );
+    const shareOf = (pid: string) =>
+      summary.split.participants.find((s) => s.participant_id === pid);
+    // "total split" recap — the sum the listed friends owe the host.
+    const listedTotal = pickable.reduce(
+      (sum, p) => sum + (shareOf(p.id)?.total_cents ?? 0),
+      0,
+    );
     return (
       <PaperApp>
         <div className="page-center">
-          <p className="eyebrow center">{bill.restaurant || "The tab"}</p>
+          <p className="eyebrow" style={{ textAlign: "center" }}>
+            {bill.restaurant || "The tab"}
+          </p>
+          <h2
+            className="h-section mt-3"
+            style={{ textAlign: "center", fontSize: 38, lineHeight: 1.0 }}
+          >
+            Which one
+            <br />
+            are you?
+          </h2>
           <p
-            className="center"
+            className="body muted mt-3"
             style={{
-              margin: "10px 0 0",
-              fontFamily: "var(--serif)",
-              fontStyle: "italic",
-              fontSize: 36,
-              lineHeight: 1.05,
-              letterSpacing: "-0.01em",
-              color: "var(--ink)",
+              textAlign: "center",
+              fontSize: 13,
+              maxWidth: 240,
+              margin: "12px auto 0",
             }}
           >
-            Which one are you?
-          </p>
-          <p className="mono muted center mt-3" style={{ fontSize: 11 }}>
-            The host already split this — tap your name to pay.
+            The host already split this. Tap your name to pay.
           </p>
 
           {error && (
@@ -255,54 +266,131 @@ export default function FriendSplit() {
             </p>
           )}
 
-          <div className="col mt-6" style={{ paddingBottom: 14 }}>
-            {pickable.length === 0 ? (
-              <p className="body muted center" style={{ fontSize: 13 }}>
-                No one to pick yet — check back once the host finishes.
-              </p>
-            ) : (
-              pickable.map((p) => {
-                const share = summary.split.participants.find(
-                  (s) => s.participant_id === p.id,
-                );
-                const paid = p.payment_status === "paid";
-                return (
-                  <button
-                    key={p.id}
-                    className="party-row"
-                    disabled={!p.participant_token}
-                    onClick={() =>
-                      p.participant_token &&
-                      pickIdentity(p.id, p.participant_token)
-                    }
-                    style={{
-                      width: "100%",
-                      textAlign: "left",
-                      background: "transparent",
-                      cursor: p.participant_token ? "pointer" : "default",
-                    }}
-                  >
-                    <Avatar name={p.display_name} seed={p.id} size="md" />
-                    <div className="flex1">
-                      <p style={{ margin: 0, fontSize: 14 }}>
-                        {p.display_name}
-                      </p>
-                      <p
-                        className="mono muted"
-                        style={{ margin: 0, fontSize: 11 }}
+          {pickable.length === 0 ? (
+            <p className="body muted center mt-6" style={{ fontSize: 13 }}>
+              No one to pick yet — check back once the host finishes.
+            </p>
+          ) : (
+            <>
+              {/* Single soft paper card with dashed perforations between
+                  names — a receipt's tab list. */}
+              <div
+                className="mt-6"
+                style={{
+                  background: "var(--paper)",
+                  borderRadius: 14,
+                  border: "1px solid rgba(31,61,43,.10)",
+                  overflow: "hidden",
+                  boxShadow: "0 8px 24px -14px rgba(31,61,43,.16)",
+                }}
+              >
+                {pickable.map((p, i) => {
+                  const share = shareOf(p.id);
+                  const paid = p.payment_status === "paid";
+                  const disabled = paid || !p.participant_token;
+                  const isLast = i === pickable.length - 1;
+                  return (
+                    <button
+                      key={p.id}
+                      disabled={disabled}
+                      onClick={() =>
+                        p.participant_token &&
+                        pickIdentity(p.id, p.participant_token)
+                      }
+                      style={{
+                        appearance: "none",
+                        border: 0,
+                        background: "transparent",
+                        width: "100%",
+                        padding: "14px 16px",
+                        borderBottom: isLast
+                          ? "0"
+                          : "1px dashed rgba(31,61,43,.18)",
+                        display: "grid",
+                        gridTemplateColumns: "auto 1fr auto auto",
+                        gap: 12,
+                        alignItems: "center",
+                        textAlign: "left",
+                        cursor: disabled ? "default" : "pointer",
+                        opacity: paid ? 0.5 : 1,
+                        transition: "background .15s ease",
+                        fontFamily: "inherit",
+                        color: "inherit",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!disabled)
+                          e.currentTarget.style.background =
+                            "rgba(31,61,43,.04)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = "transparent";
+                      }}
+                    >
+                      <Avatar name={p.display_name} seed={p.id} size="md" />
+                      <div style={{ minWidth: 0 }}>
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: 15,
+                            fontWeight: 500,
+                            color: "var(--ink)",
+                            textTransform: "lowercase",
+                            textDecoration: paid ? "line-through" : "none",
+                            textDecorationColor: "rgba(31,61,43,.4)",
+                            textDecorationThickness: "1px",
+                          }}
+                        >
+                          {p.display_name}
+                        </p>
+                        <p
+                          className="mono"
+                          style={{
+                            margin: "3px 0 0",
+                            fontSize: 10.5,
+                            color: paid ? "var(--muted)" : "var(--accent-deep)",
+                            letterSpacing: "0.04em",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {paid ? "paid ✓" : "tap to pay"}
+                        </p>
+                      </div>
+                      <span
+                        className="mono"
+                        style={{
+                          fontSize: 14,
+                          color: "var(--ink)",
+                          fontWeight: paid ? 400 : 600,
+                          whiteSpace: "nowrap",
+                        }}
                       >
-                        {paid ? "paid ✓" : "tap to pay"}
-                      </p>
-                    </div>
-                    <span className="mono" style={{ fontSize: 13 }}>
-                      {fmtH(share?.total_cents ?? 0)}
-                    </span>
-                    <Icon.Arrow size={13} />
-                  </button>
-                );
-              })
-            )}
-          </div>
+                        {fmtH(share?.total_cents ?? 0)}
+                      </span>
+                      <span style={{ display: "flex", opacity: 0.6 }}>
+                        <Icon.Arrow size={14} />
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Footer: total recap pinned to the bottom of the frame. */}
+              <p
+                className="mono"
+                style={{
+                  textAlign: "center",
+                  fontSize: 11,
+                  color: "var(--muted)",
+                  letterSpacing: "0.04em",
+                  marginTop: "auto",
+                  paddingTop: 18,
+                }}
+              >
+                total split ·{" "}
+                <span style={{ color: "var(--ink)" }}>{fmtH(listedTotal)}</span>
+              </p>
+            </>
+          )}
         </div>
       </PaperApp>
     );
