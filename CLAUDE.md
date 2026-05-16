@@ -119,10 +119,26 @@ iou:local` — a bare `-e NAME` forwards that var from your shell so keys
   `ANTHROPIC_API_KEY` (receipt parsing + auto-split assignment) and
   `OPENAI_API_KEY` (audio transcription) inline on every start, or those
   features silently fall back to their stubs.
+- **Don't run with a placeholder or invalid API key.** The stub fallback
+  triggers only when the key env var is _empty or unset_. A non-empty but
+  bogus key (e.g. pasting `sk-ant-...your-key...` literally) makes the app
+  pick the _real_ `ClaudeParser`, which then 401s on every receipt. The user
+  just sees a generic "could not parse receipt"; the real cause shows only
+  in the server log — `bill receipt: parse: anthropic status 401`. So when a
+  receipt won't parse, **check the server log first** for the underlying
+  error. Either set a real key or leave the var fully unset — never a
+  placeholder.
 - **Don't use Node < 20.** The Bash tool snapshots PATH at session start; to use
   Node 20, prefix commands with
   `export NVM_DIR="$HOME/.nvm"; source "$NVM_DIR/nvm.sh"; nvm use 20 >/dev/null 2>&1;`
 - **Don't commit straight to `main`.** Branch first, then open a PR.
+- **Don't run `npx tsc` (or `npm run build`) in a fresh worktree before
+  `npm install`.** A new worktree has no `web/node_modules`; `npx tsc` then
+  silently downloads an unrelated registry package (it prints "This is not the
+  tsc command you are looking for") and `tsc -b` fails with `tsc: command not
+found`. Run `cd web && npm install` first, then type-check with
+  `./node_modules/.bin/tsc -p tsconfig.app.json --noEmit` — the local binary,
+  not `npx`.
 - **Don't rename the Go module path while other worktree branches are in
   flight.** Renaming `module` in `go.mod` rewrites every
   `import "github.com/jjtny1/splitit/..."` line repo-wide — it's all-or-nothing.
@@ -287,6 +303,26 @@ count)` shares — shares beyond the joined participants go to `unclaimed` so
   each friend claim their own unit (e.g. two people each pick one of two
   Cokes) instead of sharing a single multi-quantity checkbox. The `items`
   table has no `qty` column.
+- **A claim carries a `share_count` for splitting a shared dish.** `claims`
+  has a `share_count` column (default 1): a friend who taps an item declares
+  how many ways it's shared with the headcount stepper, and pays `1/N` of it.
+  `split.splitItem` gives each claimer an _effective denominator_ of
+  `max(share_count, claimer count)`, which is the elegant load-bearing rule:
+  it is never below the claimer count, so the item never over-collects and a
+  lone first-tapper who sets "3 ways" is charged a third immediately (the rest
+  stays unclaimed); when nobody sets a count it collapses to the old implicit
+  even split (`max(1, m) == m`). A claimer is never charged more than the
+  `1/N` they declared. The split engine takes `[]split.Claim`
+  (`{ParticipantID, ShareCount}`), not bare participant IDs. The
+  `PUT …/claims` API accepts the current `claims:[{item_id,share_count}]`
+  shape and still the legacy `item_ids:[…]` (each an implicit count of 1);
+  `share_count` is server-clamped to `[1, 20]`. The `claims` table is
+  INSERTed from _two_ places: `handleSetClaims` lists `share_count`
+  explicitly, but `autosplit.applyAutoSplit` inserts `(item_id,
+participant_id)` only and relies on the column's `DEFAULT 1`. That works
+  because a host-assigned (auto-split) claim _is_ a whole-item claim — `1`
+  is the semantically correct default. Don't change `share_count`'s default
+  or meaning without auditing both INSERT sites.
 - **Auth is magic-link.** In `IOU_DEV=1` the link is returned in the JSON
   response. In prod it is emailed: `NewRouter` takes an `auth.EmailSender`,
   chosen by `IOU_MAIL_PROVIDER` — a log-only sender by default, or `SESSender`

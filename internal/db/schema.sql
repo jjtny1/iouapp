@@ -68,9 +68,14 @@ CREATE TABLE IF NOT EXISTS participants (
     created_at        INTEGER NOT NULL
 );
 
+-- share_count is the headcount the claimer declared for a shared dish: 1
+-- means they take the whole item, N means they pay 1/N of it. The effective
+-- denominator is max(share_count, number of claimers on the item), so the
+-- item is never over-collected and the claimer never pays more than 1/N.
 CREATE TABLE IF NOT EXISTS claims (
     item_id        TEXT NOT NULL REFERENCES items(id),
     participant_id TEXT NOT NULL REFERENCES participants(id),
+    share_count    INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (item_id, participant_id)
 );
 

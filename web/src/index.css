@@ -407,23 +407,76 @@ a {
 }
 
 /* ─── Claim list ────────────────────────────────────────────────────── */
+.claim-row {
+  border-bottom: 1px dashed var(--line-dashed);
+  border-radius: 6px;
+  transition: background 0.2s ease;
+}
+.claim-row.mine {
+  background: rgba(232, 193, 74, 0.18);
+}
 .claim-item {
   background: transparent;
   border: 0;
-  border-bottom: 1px dashed var(--line-dashed);
   padding: 12px 6px;
   text-align: left;
   display: grid;
   grid-template-columns: auto 1fr auto;
   gap: 12px;
   align-items: center;
-  border-radius: 6px;
   cursor: pointer;
   width: 100%;
-  transition: background 0.2s ease;
 }
-.claim-item.mine {
-  background: rgba(232, 193, 74, 0.18);
+
+/* Headcount stepper — appears under a claimed item for sharing a dish. */
+.share-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 8px 11px 40px;
+  margin-top: -3px;
+}
+.share-stepper-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid var(--line-dashed);
+  border-radius: 999px;
+  padding: 2px;
+  flex-shrink: 0;
+}
+.step-btn {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.step-btn:active:not(:disabled) {
+  background: rgba(0, 0, 0, 0.06);
+}
+.step-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.step-val {
+  min-width: 20px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
 }
 .claim-box {
   width: 22px;

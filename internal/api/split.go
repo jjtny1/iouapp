@@ -24,6 +24,22 @@ type participant struct {
 	token string
 }
 
+// maxShareCount caps how many ways a single item may be declared shared. A
+// realistic table never splits one dish more than this many ways; the cap
+// rejects malformed input without constraining any genuine split.
+const maxShareCount = 20
+
+// clampShareCount keeps a declared headcount within [1, maxShareCount].
+func clampShareCount(n int) int {
+	if n < 1 {
+		return 1
+	}
+	if n > maxShareCount {
+		return maxShareCount
+	}
+	return n
+}
+
 // handleBillByToken resolves a friend share token to its bill (friend view).
 func (s *Server) handleBillByToken(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
@@ -119,9 +135,16 @@ func (s *Server) handleJoinBill(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSetClaims(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
+	// A claim may carry a share_count (the headcount for a shared dish). The
+	// claims list is the current shape; item_ids is the older whole-item form
+	// and is still accepted — each such item claims a share_count of 1.
 	var req struct {
 		ParticipantToken string   `json:"participant_token"`
 		ItemIDs          []string `json:"item_ids"`
+		Claims           []struct {
+			ItemID     string `json:"item_id"`
+			ShareCount int    `json:"share_count"`
+		} `json:"claims"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -162,10 +185,17 @@ func (s *Server) handleSetClaims(w http.ResponseWriter, r *http.Request) {
 	for _, it := range items {
 		valid[it.ID] = true
 	}
-	wanted := map[string]bool{}
+	// wanted maps each claimed itemID to its share_count. item_ids claim the
+	// whole item (count 1); a claims entry overrides with its declared count.
+	wanted := map[string]int{}
 	for _, itemID := range req.ItemIDs {
 		if valid[itemID] {
-			wanted[itemID] = true
+			wanted[itemID] = 1
+		}
+	}
+	for _, c := range req.Claims {
+		if valid[c.ItemID] {
+			wanted[c.ItemID] = clampShareCount(c.ShareCount)
 		}
 	}
 
@@ -183,10 +213,10 @@ func (s *Server) handleSetClaims(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-	for itemID := range wanted {
+	for itemID, shareCount := range wanted {
 		if _, err := tx.ExecContext(r.Context(),
-			`INSERT INTO claims (item_id, participant_id) VALUES (?, ?)`,
-			itemID, participantID); err != nil {
+			`INSERT INTO claims (item_id, participant_id, share_count) VALUES (?, ?, ?)`,
+			itemID, participantID, shareCount); err != nil {
 			log.Printf("set claims: insert: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 			return
@@ -340,10 +370,12 @@ func (s *Server) loadParticipants(ctx context.Context, billID string) ([]partici
 	return parts, rows.Err()
 }
 
-// loadClaims returns a map of itemID to the sorted participant IDs claiming it.
-func (s *Server) loadClaims(ctx context.Context, billID string) (map[string][]string, error) {
+// loadClaims returns a map of itemID to the claims on it, each carrying the
+// claimer and the headcount they declared for sharing the item. Claims within
+// an item are sorted by participant id.
+func (s *Server) loadClaims(ctx context.Context, billID string) (map[string][]split.Claim, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT c.item_id, c.participant_id FROM claims c
+		`SELECT c.item_id, c.participant_id, c.share_count FROM claims c
 		 JOIN items i ON i.id = c.item_id
 		 WHERE i.bill_id = ?`, billID)
 	if err != nil {
@@ -351,19 +383,22 @@ func (s *Server) loadClaims(ctx context.Context, billID string) (map[string][]st
 	}
 	defer rows.Close()
 
-	claims := map[string][]string{}
+	claims := map[string][]split.Claim{}
 	for rows.Next() {
-		var itemID, participantID string
-		if err := rows.Scan(&itemID, &participantID); err != nil {
+		var itemID string
+		var c split.Claim
+		if err := rows.Scan(&itemID, &c.ParticipantID, &c.ShareCount); err != nil {
 			return nil, err
 		}
-		claims[itemID] = append(claims[itemID], participantID)
+		claims[itemID] = append(claims[itemID], c)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	for k := range claims {
-		sort.Strings(claims[k])
+		sort.Slice(claims[k], func(i, j int) bool {
+			return claims[k][i].ParticipantID < claims[k][j].ParticipantID
+		})
 	}
 	return claims, nil
 }
