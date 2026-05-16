@@ -42,6 +42,7 @@ type bill struct {
 	TaxCents   int        `json:"tax_cents"`
 	TipCents   int        `json:"tip_cents"`
 	Status     string     `json:"status"`
+	SplitMode  string     `json:"split_mode"`
 	Items      []billItem `json:"items"`
 	CreatedAt  int64      `json:"created_at"`
 
@@ -71,6 +72,7 @@ func (s *Server) billJSON(b bill, host bool) map[string]any {
 		"service_charge_cents":     b.ServiceChargeCents,
 		"service_charge_headcount": b.ServiceChargeHeadcount,
 		"status":                   b.Status,
+		"split_mode":               b.SplitMode,
 		"items":                    b.Items,
 		"created_at":               b.CreatedAt,
 	}
@@ -117,7 +119,7 @@ func (s *Server) handleListBills(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.DB.QueryContext(r.Context(),
 		`SELECT id, restaurant, currency, tax_cents, tip_cents,
 		        service_charge_kind, service_charge_rate_bps, service_charge_cents, service_charge_headcount,
-		        status, friend_token, created_at
+		        status, split_mode, friend_token, created_at
 		 FROM bills WHERE host_user_id = ? ORDER BY created_at DESC`, u.ID)
 	if err != nil {
 		log.Printf("list bills: query: %v", err)
@@ -131,7 +133,7 @@ func (s *Server) handleListBills(w http.ResponseWriter, r *http.Request) {
 		var b bill
 		if err := rows.Scan(&b.ID, &b.Restaurant, &b.Currency, &b.TaxCents, &b.TipCents,
 			&b.ServiceChargeKind, &b.ServiceChargeRateBps, &b.ServiceChargeCents, &b.ServiceChargeHeadcount,
-			&b.Status, &b.friendToken, &b.CreatedAt); err != nil {
+			&b.Status, &b.SplitMode, &b.friendToken, &b.CreatedAt); err != nil {
 			log.Printf("list bills: scan: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 			return
@@ -426,11 +428,11 @@ func (s *Server) loadBill(ctx context.Context, id string) (bill, error) {
 	err := s.DB.QueryRowContext(ctx,
 		`SELECT id, host_user_id, restaurant, currency, tax_cents, tip_cents,
 		        service_charge_kind, service_charge_rate_bps, service_charge_cents, service_charge_headcount,
-		        status, friend_token, created_at
+		        status, split_mode, friend_token, created_at
 		 FROM bills WHERE id = ?`, id).
 		Scan(&b.ID, &b.hostUserID, &b.Restaurant, &b.Currency, &b.TaxCents, &b.TipCents,
 			&b.ServiceChargeKind, &b.ServiceChargeRateBps, &b.ServiceChargeCents, &b.ServiceChargeHeadcount,
-			&b.Status, &b.friendToken, &b.CreatedAt)
+			&b.Status, &b.SplitMode, &b.friendToken, &b.CreatedAt)
 	return b, err
 }
 

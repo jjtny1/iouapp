@@ -18,6 +18,10 @@ import (
 type participant struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"display_name"`
+	HostManaged bool   `json:"host_managed"`
+	IsHost      bool   `json:"is_host"`
+
+	token string
 }
 
 // handleBillByToken resolves a friend share token to its bill (friend view).
@@ -82,6 +86,10 @@ func (s *Server) handleJoinBill(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.T != b.friendToken {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "bill not found"})
+		return
+	}
+	if b.SplitMode == "host" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this bill was split by the host"})
 		return
 	}
 
@@ -287,10 +295,17 @@ func (s *Server) buildSummary(ctx context.Context, b bill) (map[string]any, erro
 		entry := map[string]any{
 			"id":             p.ID,
 			"display_name":   p.DisplayName,
+			"host_managed":   p.HostManaged,
+			"is_host":        p.IsHost,
 			"payment_status": "none",
 		}
 		if pay, ok := byParticipant[p.ID]; ok {
 			entry["payment_status"] = pay.Status
+		}
+		// The per-participant token lets a host-split bill identify a
+		// participant for payment; it is exposed only on a host-split bill.
+		if b.SplitMode == "host" {
+			entry["participant_token"] = p.token
 		}
 		partsOut = append(partsOut, entry)
 	}
@@ -307,7 +322,7 @@ func (s *Server) buildSummary(ctx context.Context, b bill) (map[string]any, erro
 // loadParticipants returns a bill's participants ordered by creation time.
 func (s *Server) loadParticipants(ctx context.Context, billID string) ([]participant, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT id, display_name FROM participants
+		`SELECT id, display_name, host_managed, is_host, participant_token FROM participants
 		 WHERE bill_id = ? ORDER BY created_at, id`, billID)
 	if err != nil {
 		return nil, err
@@ -317,7 +332,7 @@ func (s *Server) loadParticipants(ctx context.Context, billID string) ([]partici
 	parts := []participant{}
 	for rows.Next() {
 		var p participant
-		if err := rows.Scan(&p.ID, &p.DisplayName); err != nil {
+		if err := rows.Scan(&p.ID, &p.DisplayName, &p.HostManaged, &p.IsHost, &p.token); err != nil {
 			return nil, err
 		}
 		parts = append(parts, p)

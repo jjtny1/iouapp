@@ -7,6 +7,7 @@ type Config struct {
 	DBPath       string
 	BaseURL      string
 	AnthropicKey string
+	OpenAIKey    string
 	DevMode      bool
 	MailProvider string
 	MailFrom     string
@@ -19,6 +20,7 @@ func Load() Config {
 		DBPath:       env("IOU_DB", "iou.db"),
 		BaseURL:      env("IOU_BASE_URL", "http://localhost:8080"),
 		AnthropicKey: os.Getenv("ANTHROPIC_API_KEY"),
+		OpenAIKey:    os.Getenv("OPENAI_API_KEY"),
 		DevMode:      boolEnv("IOU_DEV"),
 		MailProvider: env("IOU_MAIL_PROVIDER", "log"),
 		MailFrom:     os.Getenv("IOU_MAIL_FROM"),

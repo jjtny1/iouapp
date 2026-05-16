@@ -734,6 +734,175 @@ func TestDeleteBill(t *testing.T) {
 	})
 }
 
+func TestAutoSplit(t *testing.T) {
+	e := newTestEnv(t)
+	host := e.signIn("host@example.com")
+
+	bill := e.createBill(host)
+	billID := bill["id"].(string)
+	friendToken := bill["friend_token"].(string)
+
+	// Give the bill items via the receipt upload path (StubParser).
+	e.uploadReceipt(host, billID, http.StatusOK, nil)
+
+	// Post a small multipart audio body. With no API keys configured the
+	// StubTranscriber + StubAssigner run, so the bytes themselves are ignored.
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("audio", "clip.m4a")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := fw.Write([]byte("dummy-audio-bytes-the-stub-ignores")); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := mw.WriteField("host_name", "Sam"); err != nil {
+		t.Fatalf("write host_name field: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	resp, raw := e.do(host, http.MethodPost,
+		"/api/bills/"+billID+"/auto-split", &buf, mw.FormDataContentType())
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("auto split: status = %d, want 200; body=%s", resp.StatusCode, raw)
+	}
+
+	var out struct {
+		Prompt       string `json:"prompt"`
+		Participants []struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+			IsHost      bool   `json:"is_host"`
+			HostManaged bool   `json:"host_managed"`
+		} `json:"participants"`
+		Split struct {
+			Participants []struct {
+				ParticipantID string `json:"participant_id"`
+				TotalCents    int    `json:"total_cents"`
+			} `json:"participants"`
+		} `json:"split"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode auto split response: %v; body=%s", err, raw)
+	}
+
+	if out.Prompt == "" {
+		t.Error("auto split response should include the prompt")
+	}
+	if len(out.Participants) == 0 {
+		t.Fatal("audio split should create participants")
+	}
+	hostCount := 0
+	for _, p := range out.Participants {
+		if !p.HostManaged {
+			t.Errorf("participant %s should be host_managed", p.DisplayName)
+		}
+		if p.IsHost {
+			hostCount++
+		}
+	}
+	if hostCount != 1 {
+		t.Errorf("expected exactly one is_host participant, got %d", hostCount)
+	}
+
+	// At least one split participant must owe a non-zero amount.
+	nonZero := false
+	for _, p := range out.Split.Participants {
+		if p.TotalCents > 0 {
+			nonZero = true
+		}
+	}
+	if !nonZero {
+		t.Error("expected at least one participant with a non-zero total")
+	}
+
+	// Joining a host-split bill is rejected.
+	resp2, raw2 := e.do(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/participants",
+		bytes.NewReader(mustJSON(t, map[string]string{"display_name": "Latecomer", "t": friendToken})),
+		"application/json")
+	if resp2.StatusCode != http.StatusBadRequest {
+		t.Errorf("join host-split bill: status = %d, want 400; body=%s", resp2.StatusCode, raw2)
+	}
+
+	// The bill now reports split_mode "host".
+	var detail map[string]any
+	e.doJSON(host, http.MethodGet, "/api/bills/"+billID, nil, http.StatusOK, &detail)
+	if detail["split_mode"] != "host" {
+		t.Errorf("split_mode = %v, want host", detail["split_mode"])
+	}
+}
+
+// TestAutoSplitText drives the auto-split endpoint with a typed text prompt
+// instead of an audio recording — the transcription step is skipped and the
+// prompt is used verbatim.
+func TestAutoSplitText(t *testing.T) {
+	e := newTestEnv(t)
+	host := e.signIn("host@example.com")
+
+	bill := e.createBill(host)
+	billID := bill["id"].(string)
+	e.uploadReceipt(host, billID, http.StatusOK, nil)
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	const prompt = "Sam had the burger, everyone split the fries."
+	if err := mw.WriteField("text", prompt); err != nil {
+		t.Fatalf("write text field: %v", err)
+	}
+	if err := mw.WriteField("host_name", "Sam"); err != nil {
+		t.Fatalf("write host_name field: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	resp, raw := e.do(host, http.MethodPost,
+		"/api/bills/"+billID+"/auto-split", &buf, mw.FormDataContentType())
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("auto split (text): status = %d, want 200; body=%s", resp.StatusCode, raw)
+	}
+
+	var out struct {
+		Prompt       string `json:"prompt"`
+		Participants []struct {
+			HostManaged bool `json:"host_managed"`
+		} `json:"participants"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode auto split response: %v; body=%s", err, raw)
+	}
+	// A typed prompt is stored and echoed back verbatim — no transcription.
+	if out.Prompt != prompt {
+		t.Errorf("prompt = %q, want %q", out.Prompt, prompt)
+	}
+	if len(out.Participants) == 0 {
+		t.Fatal("auto split should create participants")
+	}
+
+	var detail map[string]any
+	e.doJSON(host, http.MethodGet, "/api/bills/"+billID, nil, http.StatusOK, &detail)
+	if detail["split_mode"] != "host" {
+		t.Errorf("split_mode = %v, want host", detail["split_mode"])
+	}
+
+	// Neither audio nor text supplied -> 400.
+	var empty bytes.Buffer
+	emw := multipart.NewWriter(&empty)
+	if err := emw.WriteField("host_name", "Sam"); err != nil {
+		t.Fatalf("write host_name field: %v", err)
+	}
+	if err := emw.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+	resp2, raw2 := e.do(host, http.MethodPost,
+		"/api/bills/"+billID+"/auto-split", &empty, emw.FormDataContentType())
+	if resp2.StatusCode != http.StatusBadRequest {
+		t.Errorf("auto split with no input: status = %d, want 400; body=%s", resp2.StatusCode, raw2)
+	}
+}
+
 // mustJSON marshals v or fails the test.
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()

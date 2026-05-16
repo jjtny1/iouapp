@@ -72,6 +72,10 @@ resource "aws_ecs_task_definition" "app" {
         {
           name      = "ANTHROPIC_API_KEY"
           valueFrom = aws_ssm_parameter.anthropic_api_key.arn
+        },
+        {
+          name      = "OPENAI_API_KEY"
+          valueFrom = aws_ssm_parameter.openai_api_key.arn
         }
       ]
 
