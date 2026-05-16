@@ -102,9 +102,12 @@ export default function SignIn() {
                 {error}
               </p>
             )}
+            <p className="eyebrow center" style={{ marginTop: 6 }}>
+              Currently invite only
+            </p>
             <p
               className="body muted center"
-              style={{ fontSize: 11, marginTop: 6 }}
+              style={{ fontSize: 11, marginTop: 2 }}
             >
               No passwords. We'll email you a link.
             </p>
