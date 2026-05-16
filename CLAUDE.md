@@ -243,9 +243,9 @@ count)` shares — shares beyond the joined participants go to `unclaimed` so
   `ANTHROPIC_API_KEY` lives in SSM Parameter Store as a `SecureString` (name
   `/iou/ANTHROPIC_API_KEY`), injected into the container by ECS — never in
   Terraform state or the task definition. `OPENAI_API_KEY` (audio-split
-  transcription) belongs in SSM the same way, as `/iou/OPENAI_API_KEY` — adding
-  that parameter and its ECS injection is a pending deploy follow-up for the
-  audio-split feature. `IOU_DEV` is never set in prod. SES
+  transcription) lives in SSM the same way, as `/iou/OPENAI_API_KEY`, and is
+  injected into the container by ECS (task definition `iou:2` onward).
+  `IOU_DEV` is never set in prod. SES
   starts in sandbox mode (only verified recipient addresses receive mail);
   request production access to email arbitrary users.
 - **The verify page can race the auth bootstrap.** `AuthProvider`'s initial
