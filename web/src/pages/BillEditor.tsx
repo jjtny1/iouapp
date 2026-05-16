@@ -1035,6 +1035,71 @@ export default function BillEditor() {
                       again.
                     </p>
 
+                    {/* The receipt itself — so the host can reference exact
+                        item names while describing the split, and see who
+                        each item landed on once it's been processed. */}
+                    <div className="mt-3">
+                      <p className="eyebrow">On the tab</p>
+                      <div className="mt-2">
+                        {bill.items.map((it, i) => {
+                          const assignees = (
+                            summary?.claims?.[it.id] ?? []
+                          ).map((c) => {
+                            const p = summary?.participants.find(
+                              (pp) => pp.id === c.participant_id,
+                            );
+                            return p?.is_host
+                              ? "you"
+                              : (p?.display_name ?? "someone");
+                          });
+                          return (
+                            <div
+                              key={it.id}
+                              className="row row-between"
+                              style={{
+                                gap: 10,
+                                padding: "6px 0",
+                                borderBottom:
+                                  i === bill.items.length - 1
+                                    ? "0"
+                                    : "1px dashed var(--line-dashed)",
+                              }}
+                            >
+                              <div style={{ minWidth: 0, flex: 1 }}>
+                                <p
+                                  style={{
+                                    margin: 0,
+                                    fontSize: 13,
+                                    color: "var(--ink)",
+                                  }}
+                                >
+                                  {it.name || "Item"}
+                                </p>
+                                {assignees.length > 0 && (
+                                  <p
+                                    className="mono"
+                                    style={{
+                                      margin: "2px 0 0",
+                                      fontSize: 10,
+                                      color: "var(--accent-deep)",
+                                    }}
+                                  >
+                                    → {assignees.join(", ")}
+                                  </p>
+                                )}
+                              </div>
+                              <span
+                                className="mono"
+                                style={{ fontSize: 12, whiteSpace: "nowrap" }}
+                              >
+                                {fmt(it.price_cents)}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
                     {splitting ? (
                       <AutoSplitView mode={splitMode} />
                     ) : (
