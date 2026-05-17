@@ -22,16 +22,19 @@ and claim what they ordered, and each settles their prorated share.
 **Stack**: Go (`net/http` + SQLite via pure-Go `modernc.org/sqlite`) single
 binary that also serves the SPA; React + TypeScript + Vite frontend in `web/`.
 Packages: `internal/{api,auth,db,config,receipt,transcribe,autosplit,payment,split}`.
+The same SPA also ships as a native iOS app — a Capacitor wrapper in `web/ios/`
+(see "iOS app (Capacitor)" below).
 
 ## Commands
 
-| Command                                           | Description                      |
-| ------------------------------------------------- | -------------------------------- |
-| `IOU_DEV=1 go run ./cmd/server`                   | Start API on :8080 (dev mode)    |
-| `cd web && npm run dev`                           | Start Vite dev server on :5173   |
-| `go test ./...`                                   | Run Go tests                     |
-| `cd web && npm run build`                         | Build the frontend to `web/dist` |
-| `cd web && npx tsc -p tsconfig.app.json --noEmit` | Type-check the frontend          |
+| Command                                           | Description                        |
+| ------------------------------------------------- | ---------------------------------- |
+| `IOU_DEV=1 go run ./cmd/server`                   | Start API on :8080 (dev mode)      |
+| `cd web && npm run dev`                           | Start Vite dev server on :5173     |
+| `go test ./...`                                   | Run Go tests                       |
+| `cd web && npm run build`                         | Build the frontend to `web/dist`   |
+| `cd web && npx tsc -p tsconfig.app.json --noEmit` | Type-check the frontend            |
+| `cd web && npm run sync:ios`                      | Build the SPA for iOS + sync Xcode |
 
 Receipt parsing uses the Anthropic vision API and needs `ANTHROPIC_API_KEY`;
 without it the app falls back to `receipt.StubParser` (a fixed sample receipt).
@@ -121,6 +124,52 @@ browser hits the Go server directly, no Vite proxy.
   To re-test editing a bill that already has claims, jump back to **Review** via
   the step bar, edit an item, and "Save & continue" again — that save is the
   regression check for editing a bill with existing claims.
+
+---
+
+## iOS app (Capacitor)
+
+The SPA also ships as a **native iOS app** — a Capacitor 7 wrapper around the
+same Vite build, Xcode project in `web/ios/`. Capacitor 7, _not_ 8: v8 needs
+Node 22 and the project is pinned to Node 20. CocoaPods is required
+(`brew install cocoapods`).
+
+- **Build & run**: `cd web && npm run sync:ios` builds the SPA against the live
+  API and copies it into the Xcode project; then open
+  `web/ios/App/App.xcworkspace` and Run. `npm run build:ios` is the build step
+  alone.
+- **The native app bundles a frozen snapshot of the web build** at
+  `web/ios/App/App/public/` — it does NOT auto-update from prod the way the
+  website does. After any web change lands, run `npm run sync:ios` and rebuild
+  in Xcode, or the app keeps serving stale web code. If a sync doesn't seem to
+  take, Xcode is caching the bundle — Product → Clean Build Folder.
+- **The native app is cross-origin with the API** — the WebView is served from
+  `capacitor://localhost`, the API is `https://iouapp.ai`. Three consequences,
+  all already wired: the SPA's API base is `VITE_API_BASE` (empty for the web
+  build → relative `/api`; set to the live URL by `build:ios`); the Go backend
+  has a `cors` middleware allowing the `capacitor://localhost` origin; and the
+  native build authenticates with an `Authorization: Bearer` token, since the
+  cross-site session cookie isn't sent — `verify` returns the token,
+  `currentUser`/`logout` also accept the bearer header. The web app is
+  unchanged: same-origin, cookie auth.
+- **Universal Links** carry magic-link sign-in into the app. The server
+  publishes `/.well-known/apple-app-site-association` when `IOU_APPLE_APP_ID`
+  (`<TeamID>.ai.iouapp.app`) is set; `DeepLinkHandler` in `App.tsx` routes the
+  Capacitor `appUrlOpen` event to the SPA's `/auth/verify` route. For dev the
+  entitlement is `applinks:iouapp.ai?mode=developer` — it bypasses Apple's CDN,
+  which negative-caches a failed AASA fetch for an hour, and needs the device
+  toggle Settings → Developer → Associated Domains Development. **Revert it to
+  plain `applinks:iouapp.ai` before an App Store build.**
+- **Don't let content render under the status bar.** The Capacitor WebView is
+  full-screen; `index.html` sets `viewport-fit=cover` and `.paper-app` pads
+  with `env(safe-area-inset-*)` so content clears the notch / home indicator.
+  These insets are 0 in a desktop browser, so the web layout is unaffected.
+- **Don't enlarge the receipt-editor inputs to stop iOS focus-zoom.** iOS
+  auto-zooms into any focused input under 16px, and an app-switch mid-zoom
+  (tapping the magic-link email) leaves the WebView stuck zoomed in. The
+  receipt inputs are deliberately small, so instead `main.tsx` disables
+  WebView zoom on native only (`maximum-scale=1, user-scalable=no`, gated by
+  `Capacitor.isNativePlatform()`), leaving the web app zoomable.
 
 ---
 
