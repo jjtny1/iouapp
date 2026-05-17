@@ -82,6 +82,11 @@ a {
   position: relative;
   display: flex;
   flex-direction: column;
+  /* Clear the iOS status bar / Dynamic Island and home indicator. The
+     WebView renders full-screen (viewport-fit=cover); these insets are 0
+     in a normal desktop browser, so the web layout is unaffected. */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
 }
 @media (min-width: 500px) {
   .paper-app {
