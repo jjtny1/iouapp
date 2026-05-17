@@ -26,6 +26,8 @@
 	<string>IOU needs access to your photos so you can pick a receipt image to split.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>IOU uses the microphone so you can describe out loud how a bill splits.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

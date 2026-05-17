@@ -36,6 +36,7 @@ func NewRouter(database *db.DB, cfg config.Config, mailer auth.EmailSender) http
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /.well-known/apple-app-site-association", s.handleAASA)
+	mux.HandleFunc("GET /privacy", s.handlePrivacy)
 	mux.HandleFunc("POST /api/auth/request", s.handleAuthRequest)
 	mux.HandleFunc("POST /api/auth/verify", s.handleAuthVerify)
 	mux.HandleFunc("GET /api/auth/me", s.handleAuthMe)
