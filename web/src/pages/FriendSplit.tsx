@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { api, type Bill, type BillSummary, type PaymentIntent } from "../api";
+import { useAuth } from "../auth";
 import { formatMoney } from "../money";
 import { Avatar, AvatarStack, Brand, Icon, PaperApp, QrCode } from "../ui";
 
@@ -23,6 +24,7 @@ function idKey(billId: string): string {
 
 export default function FriendSplit() {
   const { token } = useParams<{ token: string }>();
+  const { user } = useAuth();
   const [bill, setBill] = useState<Bill | null>(null);
   const [participantToken, setParticipantToken] = useState<string | null>(null);
   const [participantId, setParticipantId] = useState<string | null>(null);
@@ -62,6 +64,35 @@ export default function FriendSplit() {
       )
       .finally(() => setLoading(false));
   }, [token]);
+
+  // Once the bill and auth state are known, a signed-in friend restores their
+  // identity from their account — the participant linked to them when they
+  // joined (claim) or picked an identity (host-split) while logged in. This is
+  // what makes a tab opened from Home work on any device, not just the one
+  // they joined on. localStorage restore (above) covers the same device for
+  // signed-out friends; this covers the account across devices. A 404 means
+  // they have no linked participant — fall through to the join/picker UI.
+  useEffect(() => {
+    if (!bill || !user || participantToken) return;
+    let cancelled = false;
+    api
+      .myParticipant(bill.id)
+      .then((mine) => {
+        if (cancelled) return;
+        setParticipantToken(mine.participant_token);
+        setParticipantId(mine.participant.id);
+        // Persist for the claim flow so a later offline visit restores too;
+        // a host-split pick stays unpersisted (it is a shared roster).
+        if (bill.split_mode !== "host") {
+          localStorage.setItem(tokenKey(bill.id), mine.participant_token);
+          localStorage.setItem(idKey(bill.id), mine.participant.id);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [bill, user, participantToken]);
 
   const refresh = useCallback(async () => {
     if (!bill || !token) return;
@@ -108,6 +139,12 @@ export default function FriendSplit() {
   function pickIdentity(pickedId: string, pToken: string) {
     setParticipantToken(pToken);
     setParticipantId(pickedId);
+    // If the friend is signed in, link this identity to their account so the
+    // tab appears on their Home. Best-effort: a failure never blocks paying,
+    // and a participant already linked to someone else is left untouched.
+    if (user && bill && token) {
+      api.linkIdentity(bill.id, pickedId, token).catch(() => {});
+    }
   }
 
   // clearIdentity drops the current host-split pick and returns to the picker.
