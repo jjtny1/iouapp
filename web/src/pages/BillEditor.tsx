@@ -339,7 +339,16 @@ export default function BillEditor() {
     if (!id) return;
     api
       .getBill(id)
-      .then(loadFromBill)
+      .then((b) => {
+        loadFromBill(b);
+        // A tab that's already been set up — receipt reviewed, items
+        // saved, link shareable — opens on the Share step so the host
+        // lands on who's claimed and paid, not the start of the flow.
+        // The StepBar lets them step back to change anything. A fresh
+        // tab (no items yet) keeps the default "review" step, which the
+        // 0-item branch below renders as the receipt-upload screen.
+        if (b.items.length > 0) setStep("share");
+      })
       .catch((err) =>
         setError(err instanceof Error ? err.message : "could not load bill"),
       )
