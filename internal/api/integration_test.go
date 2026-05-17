@@ -1062,6 +1062,241 @@ func TestAutoSplitText(t *testing.T) {
 	}
 }
 
+// joinedTabResp mirrors the GET /api/bills/joined payload.
+type joinedTabResp struct {
+	BillID        string `json:"bill_id"`
+	Restaurant    string `json:"restaurant"`
+	FriendToken   string `json:"friend_token"`
+	SplitMode     string `json:"split_mode"`
+	ParticipantID string `json:"participant_id"`
+	DisplayName   string `json:"display_name"`
+	OwedCents     int    `json:"owed_cents"`
+	PaymentStatus string `json:"payment_status"`
+}
+
+// TestJoinedTabs covers the "tabs you joined" feature: a logged-in friend who
+// joins a share link gets the bill linked to their account and listed by
+// GET /api/bills/joined, while the host and anonymous joiners do not.
+func TestJoinedTabs(t *testing.T) {
+	e := newTestEnv(t)
+	host := e.signIn("host@example.com")
+	friend := e.signIn("friend@example.com")
+
+	bill := e.createBill(host)
+	billID := bill["id"].(string)
+	friendToken := bill["friend_token"].(string)
+	e.uploadReceipt(host, billID, http.StatusOK, nil)
+
+	// A signed-in friend joins: the participant is linked to their account.
+	var join struct {
+		ParticipantToken string `json:"participant_token"`
+	}
+	e.doJSON(friend, http.MethodPost, "/api/bills/"+billID+"/participants",
+		map[string]string{"display_name": "Bob", "t": friendToken},
+		http.StatusCreated, &join)
+
+	// An anonymous joiner (no session) must not surface on anyone's Home.
+	e.doJSON(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/participants",
+		map[string]string{"display_name": "Ghost", "t": friendToken},
+		http.StatusCreated, nil)
+
+	t.Run("friend sees the joined tab", func(t *testing.T) {
+		var tabs []joinedTabResp
+		e.doJSON(friend, http.MethodGet, "/api/bills/joined", nil, http.StatusOK, &tabs)
+		if len(tabs) != 1 {
+			t.Fatalf("joined tabs = %d, want 1; %+v", len(tabs), tabs)
+		}
+		if tabs[0].BillID != billID {
+			t.Errorf("bill_id = %q, want %q", tabs[0].BillID, billID)
+		}
+		if tabs[0].DisplayName != "Bob" {
+			t.Errorf("display_name = %q, want Bob", tabs[0].DisplayName)
+		}
+		if tabs[0].FriendToken != friendToken {
+			t.Errorf("friend_token = %q, want %q", tabs[0].FriendToken, friendToken)
+		}
+		if tabs[0].PaymentStatus != "none" {
+			t.Errorf("payment_status = %q, want none", tabs[0].PaymentStatus)
+		}
+	})
+
+	t.Run("host's own bill is not a joined tab", func(t *testing.T) {
+		var tabs []joinedTabResp
+		e.doJSON(host, http.MethodGet, "/api/bills/joined", nil, http.StatusOK, &tabs)
+		if len(tabs) != 0 {
+			t.Errorf("host joined tabs = %d, want 0; %+v", len(tabs), tabs)
+		}
+	})
+
+	t.Run("joined requires authentication", func(t *testing.T) {
+		resp, _ := e.do(e.newClient(), http.MethodGet, "/api/bills/joined", nil, "")
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401", resp.StatusCode)
+		}
+	})
+
+	t.Run("payment status reflects on the joined tab", func(t *testing.T) {
+		e.doJSON(host, http.MethodPatch, "/api/users/me",
+			map[string]string{"venmo_handle": "hostvenmo"}, http.StatusOK, nil)
+		var intent struct {
+			PaymentID string `json:"payment_id"`
+		}
+		e.doJSON(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/pay",
+			map[string]string{"participant_token": join.ParticipantToken},
+			http.StatusOK, &intent)
+		e.doJSON(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/pay/confirm",
+			map[string]string{
+				"participant_token": join.ParticipantToken,
+				"payment_id":        intent.PaymentID,
+			}, http.StatusOK, nil)
+
+		var tabs []joinedTabResp
+		e.doJSON(friend, http.MethodGet, "/api/bills/joined", nil, http.StatusOK, &tabs)
+		if len(tabs) != 1 || tabs[0].PaymentStatus != "paid" {
+			t.Errorf("after paying, joined tab = %+v, want one tab paid", tabs)
+		}
+	})
+}
+
+// TestLinkIdentity covers linking a host-split participant to the logged-in
+// friend who picks that identity, so the tab shows on their Home.
+func TestLinkIdentity(t *testing.T) {
+	e := newTestEnv(t)
+	host := e.signIn("host@example.com")
+	friend := e.signIn("friend@example.com")
+
+	bill := e.createBill(host)
+	billID := bill["id"].(string)
+	friendToken := bill["friend_token"].(string)
+	e.uploadReceipt(host, billID, http.StatusOK, nil)
+
+	// Host auto-splits with a typed prompt, creating host-managed participants.
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if err := mw.WriteField("text", "Sam had the burger, Pat had the fries."); err != nil {
+		t.Fatalf("write text: %v", err)
+	}
+	if err := mw.WriteField("host_name", "Sam"); err != nil {
+		t.Fatalf("write host_name: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	resp, raw := e.do(host, http.MethodPost,
+		"/api/bills/"+billID+"/auto-split", &buf, mw.FormDataContentType())
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("auto-split: status = %d; body=%s", resp.StatusCode, raw)
+	}
+
+	// Pick a non-host participant from the share-token summary.
+	var summary struct {
+		Participants []struct {
+			ID     string `json:"id"`
+			IsHost bool   `json:"is_host"`
+		} `json:"participants"`
+	}
+	e.doJSON(e.newClient(), http.MethodGet,
+		"/api/bills/"+billID+"/summary?t="+friendToken, nil, http.StatusOK, &summary)
+	var pickID string
+	for _, p := range summary.Participants {
+		if !p.IsHost {
+			pickID = p.ID
+			break
+		}
+	}
+	if pickID == "" {
+		t.Fatal("no non-host participant to pick")
+	}
+
+	linkPath := "/api/bills/" + billID + "/participants/" + pickID + "/link"
+
+	t.Run("wrong friend token is rejected", func(t *testing.T) {
+		e.doJSON(friend, http.MethodPost, linkPath,
+			map[string]string{"t": "not-the-token"}, http.StatusNotFound, nil)
+	})
+
+	t.Run("link surfaces the host-split tab on Home", func(t *testing.T) {
+		e.doJSON(friend, http.MethodPost, linkPath,
+			map[string]string{"t": friendToken}, http.StatusOK, nil)
+
+		var tabs []joinedTabResp
+		e.doJSON(friend, http.MethodGet, "/api/bills/joined", nil, http.StatusOK, &tabs)
+		if len(tabs) != 1 {
+			t.Fatalf("joined tabs = %d, want 1; %+v", len(tabs), tabs)
+		}
+		if tabs[0].SplitMode != "host" {
+			t.Errorf("split_mode = %q, want host", tabs[0].SplitMode)
+		}
+		if tabs[0].ParticipantID != pickID {
+			t.Errorf("participant_id = %q, want %q", tabs[0].ParticipantID, pickID)
+		}
+	})
+}
+
+// TestMyParticipant covers restoring a friend's identity from their account:
+// GET /api/bills/{id}/my-participant returns the participant linked to the
+// signed-in user, and nothing for anyone else.
+func TestMyParticipant(t *testing.T) {
+	e := newTestEnv(t)
+	host := e.signIn("host@example.com")
+	friend := e.signIn("friend@example.com")
+	stranger := e.signIn("stranger@example.com")
+
+	bill := e.createBill(host)
+	billID := bill["id"].(string)
+	friendToken := bill["friend_token"].(string)
+	e.uploadReceipt(host, billID, http.StatusOK, nil)
+
+	// The friend joins while signed in, so the participant is account-linked.
+	var join struct {
+		Participant      struct{ ID string } `json:"participant"`
+		ParticipantToken string              `json:"participant_token"`
+	}
+	e.doJSON(friend, http.MethodPost, "/api/bills/"+billID+"/participants",
+		map[string]string{"display_name": "Dana", "t": friendToken},
+		http.StatusCreated, &join)
+
+	t.Run("friend restores their own participant", func(t *testing.T) {
+		var mine struct {
+			Participant struct {
+				ID          string `json:"id"`
+				DisplayName string `json:"display_name"`
+			} `json:"participant"`
+			ParticipantToken string `json:"participant_token"`
+		}
+		e.doJSON(friend, http.MethodGet, "/api/bills/"+billID+"/my-participant",
+			nil, http.StatusOK, &mine)
+		if mine.Participant.ID != join.Participant.ID {
+			t.Errorf("participant id = %q, want %q", mine.Participant.ID, join.Participant.ID)
+		}
+		if mine.ParticipantToken != join.ParticipantToken {
+			t.Errorf("participant_token mismatch: got %q, want %q",
+				mine.ParticipantToken, join.ParticipantToken)
+		}
+		if mine.Participant.DisplayName != "Dana" {
+			t.Errorf("display_name = %q, want Dana", mine.Participant.DisplayName)
+		}
+	})
+
+	t.Run("a different user gets 404, not someone else's token", func(t *testing.T) {
+		e.doJSON(stranger, http.MethodGet, "/api/bills/"+billID+"/my-participant",
+			nil, http.StatusNotFound, nil)
+	})
+
+	t.Run("the host has no joined participant", func(t *testing.T) {
+		e.doJSON(host, http.MethodGet, "/api/bills/"+billID+"/my-participant",
+			nil, http.StatusNotFound, nil)
+	})
+
+	t.Run("unauthenticated is rejected", func(t *testing.T) {
+		resp, _ := e.do(e.newClient(), http.MethodGet,
+			"/api/bills/"+billID+"/my-participant", nil, "")
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401", resp.StatusCode)
+		}
+	})
+}
+
 // mustJSON marshals v or fails the test.
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()

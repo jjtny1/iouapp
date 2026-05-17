@@ -115,11 +115,18 @@ func (s *Server) handleJoinBill(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
+	// Link the participant to the joiner's account when they're logged in, so
+	// the tab shows on their Home. Joining never requires an account, so for a
+	// signed-out friend user_id stays NULL.
+	var userID any
+	if u, ok := s.currentUser(r); ok {
+		userID = u.ID
+	}
 	p := participant{ID: uuid.NewString(), DisplayName: name}
 	if _, err := s.DB.ExecContext(r.Context(),
-		`INSERT INTO participants (id, bill_id, display_name, participant_token, created_at)
-		 VALUES (?, ?, ?, ?, ?)`,
-		p.ID, b.ID, p.DisplayName, token, time.Now().Unix()); err != nil {
+		`INSERT INTO participants (id, bill_id, display_name, participant_token, user_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		p.ID, b.ID, p.DisplayName, token, userID, time.Now().Unix()); err != nil {
 		log.Printf("join bill: insert: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
@@ -128,6 +135,80 @@ func (s *Server) handleJoinBill(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"participant":       p,
 		"participant_token": token,
+	})
+}
+
+// handleLinkIdentity links a host-split participant to the account of the
+// logged-in friend who picked that identity, so the tab shows on their Home.
+// It is best-effort and idempotent: it adopts only an unlinked participant on
+// the bill, never reassigning one already tied to an account.
+func (s *Server) handleLinkIdentity(w http.ResponseWriter, r *http.Request) {
+	billID := r.PathValue("id")
+	pid := r.PathValue("pid")
+	u := r.Context().Value(userCtxKey).(user)
+
+	var req struct {
+		T string `json:"t"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	b, err := s.loadBill(r.Context(), billID)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "bill not found"})
+		return
+	}
+	if err != nil {
+		log.Printf("link identity: load: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	if req.T != b.friendToken {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "bill not found"})
+		return
+	}
+
+	if _, err := s.DB.ExecContext(r.Context(),
+		`UPDATE participants SET user_id = ?
+		 WHERE id = ? AND bill_id = ? AND user_id IS NULL`,
+		u.ID, pid, billID); err != nil {
+		log.Printf("link identity: update: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleMyParticipant returns the signed-in user's own participant on a bill,
+// if they have one — the row linked to their account when they joined (or
+// picked an identity) while logged in. It lets FriendSplit restore a friend's
+// identity from their account on any device, not just the one they joined on.
+// The account session is the only gate: it returns only a participant whose
+// user_id is the session user, so it can never expose anyone else's token.
+func (s *Server) handleMyParticipant(w http.ResponseWriter, r *http.Request) {
+	billID := r.PathValue("id")
+	u := r.Context().Value(userCtxKey).(user)
+
+	var p participant
+	err := s.DB.QueryRowContext(r.Context(),
+		`SELECT id, display_name, host_managed, is_host, participant_token
+		 FROM participants WHERE bill_id = ? AND user_id = ?
+		 ORDER BY created_at, id LIMIT 1`, billID, u.ID).
+		Scan(&p.ID, &p.DisplayName, &p.HostManaged, &p.IsHost, &p.token)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no participant"})
+		return
+	}
+	if err != nil {
+		log.Printf("my participant: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"participant":       p,
+		"participant_token": p.token,
 	})
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/jjtny1/iouapp/internal/auth"
 	"github.com/jjtny1/iouapp/internal/money"
 	"github.com/jjtny1/iouapp/internal/receipt"
+	"github.com/jjtny1/iouapp/internal/split"
 )
 
 const maxReceiptBytes = 10 << 20
@@ -157,6 +158,155 @@ func (s *Server) handleListBills(w http.ResponseWriter, r *http.Request) {
 		}
 		bills[i].Items = items
 		out = append(out, s.billJSON(bills[i], true))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// joinedTab is one entry in the "tabs you joined" list on Home: a bill the
+// user joined as a friend (not as host), carrying their own computed share
+// and payment status so Home can show a badge without a second request.
+type joinedTab struct {
+	BillID        string `json:"bill_id"`
+	Restaurant    string `json:"restaurant"`
+	Currency      string `json:"currency"`
+	CreatedAt     int64  `json:"created_at"`
+	FriendToken   string `json:"friend_token"`
+	SplitMode     string `json:"split_mode"`
+	ParticipantID string `json:"participant_id"`
+	DisplayName   string `json:"display_name"`
+	OwedCents     int    `json:"owed_cents"`
+	PaymentStatus string `json:"payment_status"`
+}
+
+// handleListJoinedBills returns the bills the user joined as a friend — every
+// bill with a participant row linked to their account — excluding bills they
+// host (those already show in the hosted list). Each tab carries the user's
+// own share, computed from the live split.
+func (s *Server) handleListJoinedBills(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value(userCtxKey).(user)
+
+	rows, err := s.DB.QueryContext(r.Context(),
+		`SELECT b.id, b.restaurant, b.currency,
+		        b.tax_cents, b.tip_cents,
+		        b.service_charge_kind, b.service_charge_rate_bps,
+		        b.service_charge_cents, b.service_charge_headcount,
+		        b.split_mode, b.friend_token, b.created_at,
+		        p.id, p.display_name
+		 FROM participants p
+		 JOIN bills b ON b.id = p.bill_id
+		 WHERE p.user_id = ? AND b.host_user_id <> ?
+		 ORDER BY b.created_at DESC`, u.ID, u.ID)
+	if err != nil {
+		log.Printf("joined bills: query: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	defer rows.Close()
+
+	// joinedBill pairs a scanned bill row with the user's participant on it;
+	// the split is computed in a second pass so the rows cursor is freed.
+	type joinedBill struct {
+		b             bill
+		participantID string
+		displayName   string
+	}
+	var joined []joinedBill
+	for rows.Next() {
+		var jb joinedBill
+		if err := rows.Scan(&jb.b.ID, &jb.b.Restaurant, &jb.b.Currency,
+			&jb.b.TaxCents, &jb.b.TipCents,
+			&jb.b.ServiceChargeKind, &jb.b.ServiceChargeRateBps,
+			&jb.b.ServiceChargeCents, &jb.b.ServiceChargeHeadcount,
+			&jb.b.SplitMode, &jb.b.friendToken, &jb.b.CreatedAt,
+			&jb.participantID, &jb.displayName); err != nil {
+			log.Printf("joined bills: scan: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		joined = append(joined, jb)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("joined bills: rows: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	rows.Close()
+
+	out := make([]joinedTab, 0, len(joined))
+	for _, jb := range joined {
+		items, err := s.loadItems(r.Context(), jb.b.ID)
+		if err != nil {
+			log.Printf("joined bills: items: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		parts, err := s.loadParticipants(r.Context(), jb.b.ID)
+		if err != nil {
+			log.Printf("joined bills: participants: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		claims, err := s.loadClaims(r.Context(), jb.b.ID)
+		if err != nil {
+			log.Printf("joined bills: claims: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		payments, err := s.loadPayments(r.Context(), jb.b.ID)
+		if err != nil {
+			log.Printf("joined bills: payments: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+
+		splitItems := make([]split.Item, 0, len(items))
+		for _, it := range items {
+			splitItems = append(splitItems, split.Item{ID: it.ID, TotalCents: it.PriceCents})
+		}
+		participantIDs := make([]string, 0, len(parts))
+		for _, p := range parts {
+			participantIDs = append(participantIDs, p.ID)
+		}
+		summary := split.Compute(split.Input{
+			Items:    splitItems,
+			TaxCents: jb.b.TaxCents,
+			TipCents: jb.b.TipCents,
+			Service: split.ServiceCharge{
+				Kind:       jb.b.ServiceChargeKind,
+				RateBps:    jb.b.ServiceChargeRateBps,
+				FixedCents: jb.b.ServiceChargeCents,
+				Headcount:  jb.b.ServiceChargeHeadcount,
+			},
+			Claims:         claims,
+			ParticipantIDs: participantIDs,
+		})
+		owed := 0
+		for _, ps := range summary.Participants {
+			if ps.ParticipantID == jb.participantID {
+				owed = ps.TotalCents
+				break
+			}
+		}
+		status := "none"
+		for _, p := range payments {
+			if p.ParticipantID == jb.participantID {
+				status = p.Status
+				break
+			}
+		}
+
+		out = append(out, joinedTab{
+			BillID:        jb.b.ID,
+			Restaurant:    jb.b.Restaurant,
+			Currency:      jb.b.Currency,
+			CreatedAt:     jb.b.CreatedAt,
+			FriendToken:   jb.b.friendToken,
+			SplitMode:     jb.b.SplitMode,
+			ParticipantID: jb.participantID,
+			DisplayName:   jb.displayName,
+			OwedCents:     owed,
+			PaymentStatus: status,
+		})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
