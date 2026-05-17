@@ -35,6 +35,7 @@ func NewRouter(database *db.DB, cfg config.Config, mailer auth.EmailSender) http
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("GET /.well-known/apple-app-site-association", s.handleAASA)
 	mux.HandleFunc("POST /api/auth/request", s.handleAuthRequest)
 	mux.HandleFunc("POST /api/auth/verify", s.handleAuthVerify)
 	mux.HandleFunc("GET /api/auth/me", s.handleAuthMe)
@@ -57,11 +58,71 @@ func NewRouter(database *db.DB, cfg config.Config, mailer auth.EmailSender) http
 	mux.HandleFunc("POST /api/bills/{id}/payments/{pid}", s.requireAuth(s.handleMarkPayment))
 	mux.Handle("/", spaHandler("web/dist"))
 
-	return logging(mux)
+	return logging(cors(mux))
+}
+
+// allowedOrigins are the cross-origin callers permitted by CORS. The web app
+// is served by this same server, so it is same-origin and never triggers
+// CORS; the only cross-origin caller is the native iOS app, whose Capacitor
+// WebView is served from capacitor://localhost. (If a CORS request is wrongly
+// rejected, check the request's actual Origin header against this set.)
+var allowedOrigins = map[string]bool{
+	"capacitor://localhost": true,
+}
+
+// cors answers CORS preflight requests and tags allowed cross-origin
+// responses. Native-app requests authenticate with a bearer token, not a
+// cookie, so Access-Control-Allow-Credentials is intentionally not sent.
+func cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); allowedOrigins[origin] {
+			h := w.Header()
+			h.Set("Access-Control-Allow-Origin", origin)
+			h.Add("Vary", "Origin")
+			h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
+			h.Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			h.Set("Access-Control-Max-Age", "86400")
+		}
+		// Preflight requests carry no auth and match no API route — answer
+		// them here before the mux sends them to the SPA fallback.
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleAASA serves the Apple App Site Association file. iOS fetches it over
+// HTTPS to authorize the native app to handle iouapp.ai Universal Links —
+// specifically the magic-link sign-in path /auth/verify, so tapping the email
+// link opens the app instead of Safari. It is published only when
+// IOU_APPLE_APP_ID is configured; until then it 404s, the correct
+// "no association" state.
+func (s *Server) handleAASA(w http.ResponseWriter, r *http.Request) {
+	if s.Cfg.AppleAppID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"applinks": map[string]any{
+			"details": []any{
+				map[string]any{
+					"appIDs": []string{s.Cfg.AppleAppID},
+					"components": []any{
+						map[string]any{
+							"/":       "/auth/verify",
+							"comment": "magic-link sign-in",
+						},
+					},
+				},
+			},
+		},
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

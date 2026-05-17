@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.developer.associated-domains</key>
+	<!-- "?mode=developer" makes iOS fetch the AASA file directly from the
+	     server, bypassing Apple's CDN (whose copy can be stale). Required for
+	     development testing; before an App Store release, change this back to
+	     plain "applinks:iouapp.ai". -->
+	<array>
+		<string>applinks:iouapp.ai?mode=developer</string>
+	</array>
+</dict>
+</plist>
