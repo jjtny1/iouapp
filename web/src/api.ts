@@ -132,11 +132,47 @@ export interface AutoSplitResult extends BillSummary {
   notes: string;
 }
 
+// API_BASE prefixes every request path. It is empty for the web build (the Go
+// server serves the SPA, so `/api` is same-origin) and set to the live backend
+// for the native iOS build — see VITE_API_BASE in vite-env.d.ts.
+const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+
+/** apiUrl resolves an `/api/...` path against the configured backend. */
+export function apiUrl(path: string): string {
+  return API_BASE + path;
+}
+
+// The native iOS build is cross-origin with the API and receives no session
+// cookie, so it authenticates with a bearer token instead. The web build is
+// same-origin and uses the HttpOnly session cookie, so it stores no token.
+// IS_NATIVE keys off VITE_API_BASE, which only the iOS build sets.
+const IS_NATIVE = API_BASE !== "";
+const TOKEN_KEY = "iou_session_token";
+
+/** setAuthToken persists (or clears) the native app's session token. It is a
+ *  no-op on the web build, which authenticates with the session cookie. */
+export function setAuthToken(token: string | null): void {
+  if (!IS_NATIVE) return;
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+/** authHeaders returns the bearer Authorization header for the native app,
+ *  or an empty object on the web build / when signed out. */
+function authHeaders(): Record<string, string> {
+  const t = IS_NATIVE ? localStorage.getItem(TOKEN_KEY) : null;
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(apiUrl(path), {
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
     ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+      ...init?.headers,
+    },
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -152,13 +188,26 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ email }),
     }),
-  verify: (token: string) =>
-    request<User>("/api/auth/verify", {
+  // verify exchanges a magic-link token for a session. On the native build it
+  // also stashes the session token the response carries, so later requests
+  // can send it as a bearer token (the web build relies on the cookie).
+  verify: async (token: string): Promise<User> => {
+    const u = await request<User & { token?: string }>("/api/auth/verify", {
       method: "POST",
       body: JSON.stringify({ token }),
-    }),
-  logout: () =>
-    request<{ message: string }>("/api/auth/logout", { method: "POST" }),
+    });
+    if (u.token) setAuthToken(u.token);
+    return u;
+  },
+  logout: async (): Promise<{ message: string }> => {
+    try {
+      return await request<{ message: string }>("/api/auth/logout", {
+        method: "POST",
+      });
+    } finally {
+      setAuthToken(null);
+    }
+  },
   updateVenmoHandle: (venmo_handle: string) =>
     request<User>("/api/users/me", {
       method: "PATCH",
@@ -173,9 +222,10 @@ export const api = {
   uploadReceipt: async (id: string, file: File): Promise<Bill> => {
     const form = new FormData();
     form.append("receipt", file);
-    const res = await fetch(`/api/bills/${id}/receipt`, {
+    const res = await fetch(apiUrl(`/api/bills/${id}/receipt`), {
       method: "POST",
       credentials: "same-origin",
+      headers: authHeaders(),
       body: form,
     });
     const body = await res.json().catch(() => ({}));
@@ -198,9 +248,10 @@ export const api = {
     form.append("host_name", hostName);
     if ("audio" in input) form.append("audio", input.audio);
     else form.append("text", input.text);
-    const res = await fetch(`/api/bills/${id}/auto-split`, {
+    const res = await fetch(apiUrl(`/api/bills/${id}/auto-split`), {
       method: "POST",
       credentials: "same-origin",
+      headers: authHeaders(),
       body: form,
     });
     const body = await res.json().catch(() => ({}));
@@ -219,9 +270,10 @@ export const api = {
   // deleteBill removes a tab the signed-in user hosts. The server replies
   // 204 No Content, so there is no body to parse on success.
   deleteBill: async (id: string): Promise<void> => {
-    const res = await fetch(`/api/bills/${id}`, {
+    const res = await fetch(apiUrl(`/api/bills/${id}`), {
       method: "DELETE",
       credentials: "same-origin",
+      headers: authHeaders(),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
