@@ -41,11 +41,16 @@ func TestAppURL(t *testing.T) {
 	if !strings.HasPrefix(got, "https://venmo.com/host-venmo?") {
 		t.Fatalf("AppURL = %q, want a https://venmo.com/host-venmo?… link", got)
 	}
-	// Venmo's note parser renders "+" literally instead of as a space, so the
-	// URL must percent-encode spaces as %20 — otherwise the prefilled note
-	// shows up as "My+share+of+Cafe…".
+	// Venmo's note display field renders both "+" and "%20" as a literal "+"
+	// in the prefilled payment — both standard space encodings are mangled.
+	// payment.payURL replaces regular spaces with U+00A0 (non-breaking space,
+	// encoded as %C2%A0) to dodge the bug, so the URL must contain neither
+	// "+" nor "%20".
 	if strings.Contains(got, "+") {
-		t.Errorf("AppURL = %q, contains '+'; spaces must be %%20-encoded", got)
+		t.Errorf("AppURL = %q, contains '+'; spaces would render literally in Venmo", got)
+	}
+	if strings.Contains(got, "%20") {
+		t.Errorf("AppURL = %q, contains %%20; Venmo also renders that as '+'", got)
 	}
 	q := mustQuery(t, got)
 	if q.Get("txn") != "pay" {
@@ -54,8 +59,11 @@ func TestAppURL(t *testing.T) {
 	if q.Get("amount") != "12.34" {
 		t.Errorf("amount = %q, want 12.34", q.Get("amount"))
 	}
-	if q.Get("note") != note {
-		t.Errorf("note = %q, want %q", q.Get("note"), note)
+	// Spaces in the note are substituted with U+00A0 (non-breaking space) —
+	// visually identical to a regular space but not mangled by Venmo.
+	wantNote := strings.ReplaceAll(note, " ", " ")
+	if q.Get("note") != wantNote {
+		t.Errorf("note = %q, want %q (spaces should be U+00A0)", q.Get("note"), wantNote)
 	}
 	// The handle belongs in the URL path; carrying it as a recipients query
 	// param is the legacy shape that triggered the "we don't recognize that

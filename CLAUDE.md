@@ -237,8 +237,8 @@ found`. Run `cd web && npm install` first, then type-check with
   are expanded at parse time (see below), so nothing downstream multiplies by a
   quantity.
 - **Don't bring back the `venmo://paycharge?txn=pay&recipients=…` deep link,
-  and don't strip the `+` → `%20` workaround on the note.** Two separate
-  things, both load-bearing:
+  and don't put regular spaces in the note.** Two separate Venmo bugs the
+  payment URL works around, both load-bearing:
   1. Venmo broke `venmo://paycharge?…` in 2024 — the current app reads it as
      an unknown "Venmo Code" and shows "We don't recognize that code. Recheck
      and try again." The working format `internal/payment` uses is the
@@ -248,13 +248,17 @@ found`. Run `cd web && npm install` first, then type-check with
      installed and falls back to venmo.com web otherwise — one link covers
      phone taps, desktop click-throughs, and QR scans (a phone camera follows
      the Universal Link straight into the Venmo app).
-  2. Even on the Universal Link, Venmo's note parser renders `+` literally
-     ("My+share+of+Cafe…"). `q.Encode()` form-encodes spaces as `+`, so the
-     note must percent-encode spaces as `%20` instead — `internal/payment`
-     does `strings.ReplaceAll(q.Encode(), "+", "%20")`. This was originally
-     noted for the `venmo://` scheme but it's still true for the new URL; an
-     early version of the migration dropped the replacement and shipped a
-     visible regression to production.
+  2. Venmo's note display field renders **both** `+` and `%20` as a literal
+     `+` in the prefilled payment — both standard space encodings show up as
+     "My+share+of+Cafe…" on the user's screen. `internal/payment` substitutes
+     regular spaces with U+00A0 (non-breaking space, encoded `%C2%A0`) before
+     calling `q.Encode()`: it's visually identical to a regular space but its
+     encoding doesn't go through Venmo's space-mangling code path. Confirmed
+     after shipping both literal `+` and `%20` to production and seeing the
+     same broken display each time — pasting the bare URL into Safari and
+     letting it open Venmo reproduced the bug, ruling out our own server or
+     SPA. The payment_test asserts the URL contains neither `+` nor `%20` so
+     a future "clean up the unicode magic" refactor can't silently regress.
 - **Don't build the production Docker image without `--platform linux/amd64`.**
   Apple Silicon Macs build arm64 images by default, but the Fargate task runs
   x86_64 — a native-arch image pushes fine, then the task dies on start with an
