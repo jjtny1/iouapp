@@ -57,7 +57,11 @@ func payURL(handle string, amountCents int, note string) string {
 	q.Set("txn", "pay")
 	q.Set("amount", amountParam(amountCents))
 	q.Set("note", note)
-	return "https://venmo.com/" + handle + "?" + q.Encode()
+	// Venmo's note parser renders "+" literally instead of as a space — even
+	// in the Universal Link form — so a form-encoded note shows up as
+	// "My+share+of+Cafe…" in the prefilled payment. Percent-encode spaces as
+	// %20 instead.
+	return "https://venmo.com/" + handle + "?" + strings.ReplaceAll(q.Encode(), "+", "%20")
 }
 
 // AppURL builds the link used to hand a phone off to Venmo and the value
