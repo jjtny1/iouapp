@@ -35,19 +35,15 @@ func TestNormalizeHandle(t *testing.T) {
 func TestAppURL(t *testing.T) {
 	const note = "My share of Dinner 🧾"
 	got := AppURL("host-venmo", 1234, note)
-	if !strings.HasPrefix(got, "venmo://paycharge?") {
-		t.Fatalf("AppURL = %q, want a venmo://paycharge link", got)
-	}
-	// Spaces must be %20-encoded — Venmo shows a literal "+" otherwise.
-	if strings.Contains(got, "+") {
-		t.Errorf("AppURL = %q, contains '+'; spaces must be %%20-encoded", got)
+	// The Universal Link puts the handle in the path, not in a query param;
+	// the venmo://paycharge?recipients=… form this replaced was broken by
+	// Venmo in 2024.
+	if !strings.HasPrefix(got, "https://venmo.com/host-venmo?") {
+		t.Fatalf("AppURL = %q, want a https://venmo.com/host-venmo?… link", got)
 	}
 	q := mustQuery(t, got)
 	if q.Get("txn") != "pay" {
 		t.Errorf("txn = %q, want pay", q.Get("txn"))
-	}
-	if q.Get("recipients") != "host-venmo" {
-		t.Errorf("recipients = %q, want host-venmo", q.Get("recipients"))
 	}
 	if q.Get("amount") != "12.34" {
 		t.Errorf("amount = %q, want 12.34", q.Get("amount"))
@@ -55,15 +51,32 @@ func TestAppURL(t *testing.T) {
 	if q.Get("note") != note {
 		t.Errorf("note = %q, want %q", q.Get("note"), note)
 	}
+	// The handle belongs in the URL path; carrying it as a recipients query
+	// param is the legacy shape that triggered the "we don't recognize that
+	// code" Venmo error.
+	if q.Has("recipients") {
+		t.Errorf("AppURL = %q, must not include legacy recipients= param", got)
+	}
 }
 
 func TestWebURL(t *testing.T) {
 	got := WebURL("host-venmo", 500, "note")
-	if !strings.HasPrefix(got, "https://account.venmo.com/pay?") {
-		t.Fatalf("WebURL = %q, want an account.venmo.com link", got)
+	if !strings.HasPrefix(got, "https://venmo.com/host-venmo?") {
+		t.Fatalf("WebURL = %q, want a https://venmo.com/host-venmo?… link", got)
 	}
 	if q := mustQuery(t, got); q.Get("amount") != "5.00" {
 		t.Errorf("amount = %q, want 5.00", q.Get("amount"))
+	}
+}
+
+func TestAppAndWebURLAreSame(t *testing.T) {
+	// Both fields now resolve to the same Universal Link; the split into
+	// app_url / web_url is kept only for the payment-intent API shape.
+	app := AppURL("host-venmo", 1234, "Note")
+	web := WebURL("host-venmo", 1234, "Note")
+	if app != web {
+		t.Errorf("AppURL %q and WebURL %q diverge; expected the same Universal Link",
+			app, web)
 	}
 }
 

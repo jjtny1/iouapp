@@ -42,28 +42,34 @@ func amountParam(cents int) string {
 	return fmt.Sprintf("%d.%02d", cents/100, cents%100)
 }
 
-// payQuery builds the query string shared by the app and web pay links.
-// Spaces are percent-encoded as %20 rather than "+": Venmo's deep-link
-// parser does not treat "+" as a space, so form-style encoding would show a
-// literal "+" between every word of the note.
-func payQuery(handle string, amountCents int, note string) string {
+// payURL builds the Venmo Universal Link that prefills a payment to handle for
+// amountCents with note. Venmo's iOS and Android apps claim venmo.com, so the
+// same https URL opens the app when installed and falls back to venmo.com web
+// otherwise — one link covers phones, desktop browsers, and QR scans.
+//
+// The legacy venmo://paycharge?txn=pay&recipients=… scheme this replaced
+// stopped working in 2024: the current Venmo app treats it as an unknown
+// "Venmo Code" and shows "We don't recognize that code. Recheck and try
+// again." The path-based handle (venmo.com/<user>) is the format Venmo's own
+// share links and docs use today.
+func payURL(handle string, amountCents int, note string) string {
 	q := url.Values{}
 	q.Set("txn", "pay")
-	q.Set("recipients", handle)
 	q.Set("amount", amountParam(amountCents))
 	q.Set("note", note)
-	return strings.ReplaceAll(q.Encode(), "+", "%20")
+	return "https://venmo.com/" + handle + "?" + q.Encode()
 }
 
-// AppURL builds a venmo:// deep link that opens the Venmo app prefilled to pay
-// handle the given amount with note. It is the link offered on phones and
-// encoded into the desktop QR code.
+// AppURL builds the link used to hand a phone off to Venmo and the value
+// encoded into the desktop QR code. It is a Universal Link, so iOS / Android
+// open the Venmo app prefilled when installed.
 func AppURL(handle string, amountCents int, note string) string {
-	return "venmo://paycharge?" + payQuery(handle, amountCents, note)
+	return payURL(handle, amountCents, note)
 }
 
-// WebURL builds an https://venmo.com pay link for desktop browsers. On a
-// desktop with no Venmo app it opens Venmo's web pay flow.
+// WebURL is the same Universal Link, exposed under a separate name for the
+// payment intent's web fallback field. On a desktop with no Venmo app it
+// opens venmo.com's web pay flow.
 func WebURL(handle string, amountCents int, note string) string {
-	return "https://account.venmo.com/pay?" + payQuery(handle, amountCents, note)
+	return payURL(handle, amountCents, note)
 }

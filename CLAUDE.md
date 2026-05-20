@@ -236,16 +236,16 @@ found`. Run `cd web && npm install` first, then type-check with
   unit; `price_cents` is that unit's full price. Multi-quantity receipt lines
   are expanded at parse time (see below), so nothing downstream multiplies by a
   quantity.
-- **Don't encode Venmo deep-link params with `url.Values.Encode()` alone.** It
-  form-encodes spaces as `+`, and Venmo's deep-link parser renders the `+`
-  literally in the payment note (`My+share+of+Cafe…`). Percent-encode spaces as
-  `%20` instead — `internal/payment` does
-  `strings.ReplaceAll(q.Encode(), "+", "%20")`.
-- **Don't put the `venmo.com` web link in the pay QR code.** A phone camera
-  scanning an `https://account.venmo.com/pay?…` link opens Venmo's _website_ (a
-  login wall), not the app. Encode the `venmo://` app deep link in the QR — the
-  camera opens it straight in the Venmo app. The `web_url` is only for paying on
-  the desktop machine itself.
+- **Don't bring back the `venmo://paycharge?txn=pay&recipients=…` deep link.**
+  Venmo broke that URL scheme in 2024 — the current app interprets it as an
+  unknown "Venmo Code" and shows "We don't recognize that code. Recheck and try
+  again." The working format `internal/payment` uses is the Universal Link
+  `https://venmo.com/<handle>?txn=pay&amount=…&note=…` (path-based handle,
+  not a `recipients=` query param). Venmo's iOS and Android apps claim
+  `venmo.com`, so the same https URL opens the app when installed and falls
+  back to venmo.com web otherwise — one link covers phones, desktop browsers,
+  and QR scans. The same URL is fine in the QR code: a phone camera follows the
+  Universal Link straight into the Venmo app.
 - **Don't build the production Docker image without `--platform linux/amd64`.**
   Apple Silicon Macs build arm64 images by default, but the Fargate task runs
   x86_64 — a native-arch image pushes fine, then the task dies on start with an
@@ -342,11 +342,13 @@ NOT EXISTS` never alters an existing table, so a column added only to
 - **Payments are Venmo hand-offs.** The host saves a `venmo_handle` on their
   user row (set in the bill editor or on the Home page; new tabs reuse it).
   `POST /pay` returns a payment intent — the host's handle, the amount owed,
-  and `app_url` (`venmo://`) / `web_url` (`account.venmo.com`) deep links built
-  by `internal/payment`. Phones open `app_url` directly; the desktop pay sheet
-  shows a QR code that _also_ encodes `app_url` (so a scanning phone lands in
-  the Venmo app), with `web_url` only as a click-through for paying on the
-  desktop itself. Venmo reports nothing back, so a payment is marked paid by
+  and `app_url` / `web_url` (both the same `https://venmo.com/<handle>?txn=pay…`
+  Universal Link, since Venmo broke the legacy `venmo://paycharge?…` scheme —
+  see the matching note in Mistakes to Avoid). The two fields stay separate in
+  the API for the existing intent shape. Phones open `app_url` directly (iOS /
+  Android route the Universal Link into the app); the desktop pay sheet shows a
+  QR code that encodes `app_url` (a scanning phone follows it into the app);
+  `web_url` is the click-through for paying on the desktop itself. Venmo reports nothing back, so a payment is marked paid by
   the friend's self-report (`POST /pay/confirm`, no proof) or by the host
   toggling it (`POST /bills/{id}/payments/{pid}` with `{"paid":bool}`). The
   `payments` table keeps vestigial `provider`/`tx_ref` columns from the earlier
