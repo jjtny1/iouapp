@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { useParams } from "react-router-dom";
 import { api, type Bill, type BillSummary, type PaymentIntent } from "../api";
 import { useAuth } from "../auth";
@@ -42,6 +48,16 @@ export default function FriendSplit() {
   // lets them step back to their own split view (via the IOU wordmark) so the
   // page isn't a dead end — feedback was that there was no way out of it.
   const [showSplit, setShowSplit] = useState(false);
+  // pendingClaims holds the user's most recent tap intent during an in-flight
+  // save, so the checkboxes and total bar reflect the tap immediately instead
+  // of waiting for the API round-trip. Cleared when the latest save's
+  // response arrives. saveReqRef sequences concurrent saves so an older
+  // response can't clobber a newer one if they return out of order.
+  const [pendingClaims, setPendingClaims] = useState<Map<
+    string,
+    number
+  > | null>(null);
+  const saveReqRef = useRef(0);
 
   useEffect(() => {
     if (!token) return;
@@ -154,9 +170,13 @@ export default function FriendSplit() {
     setError(null);
   }
 
-  // myClaims reads this friend's current claims out of the summary as a map of
+  // myClaims reads this friend's current claims as a map of
   // item_id -> share_count (the headcount they declared for sharing it).
+  // Prefers pendingClaims (the tap the user just made) so the UI doesn't
+  // wait for the API round-trip — the live summary is the fallback once the
+  // latest save's response has landed.
   function myClaims(): Map<string, number> {
+    if (pendingClaims) return new Map(pendingClaims);
     const m = new Map<string, number>();
     if (!summary || !participantId) return m;
     for (const [itemId, entries] of Object.entries(summary.claims)) {
@@ -166,22 +186,33 @@ export default function FriendSplit() {
     return m;
   }
 
-  // saveClaims posts the friend's whole claim set and stores the fresh summary.
+  // saveClaims posts the friend's whole claim set and stores the fresh
+  // summary. Holds the tap's claims in pendingClaims while the API is in
+  // flight so the UI shows the new state immediately. Only the response of
+  // the most recent save is applied — older responses arriving out of order
+  // are dropped so they can't overwrite a newer summary.
   async function saveClaims(claims: Map<string, number>) {
     if (!bill || !participantToken) return;
+    const myReq = ++saveReqRef.current;
+    setPendingClaims(claims);
     try {
-      setSummary(
-        await api.setClaims(
-          bill.id,
-          participantToken,
-          [...claims].map(([item_id, share_count]) => ({
-            item_id,
-            share_count,
-          })),
-        ),
+      const next = await api.setClaims(
+        bill.id,
+        participantToken,
+        [...claims].map(([item_id, share_count]) => ({
+          item_id,
+          share_count,
+        })),
       );
+      if (myReq === saveReqRef.current) {
+        setSummary(next);
+        setPendingClaims(null);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "could not update");
+      if (myReq === saveReqRef.current) {
+        setError(err instanceof Error ? err.message : "could not update");
+        setPendingClaims(null);
+      }
     }
   }
 
@@ -561,15 +592,32 @@ export default function FriendSplit() {
   const myName = myParticipant?.display_name || name || "you";
   const firstName = myName.split(/\s+/)[0];
   const isPaid = myParticipant?.payment_status === "paid";
-  const owes = myShare?.total_cents ?? 0;
   const fmt = (c: number) => formatMoney(c, bill.currency);
+
+  // While a claim save is in flight, derive the visible totals from
+  // pendingClaims so the bar reflects the tap immediately. The math mirrors
+  // the server's proration (tax/tip and a percent service charge scale with
+  // the item subtotal), so the value differs from the eventual server value
+  // by at most a cent — the largest-remainder pennies snap into place when
+  // the response lands. A fixed service charge stays on the live summary's
+  // value since it splits by headcount, not by claims.
+  const optimistic = pendingClaims
+    ? optimisticShare(
+        bill,
+        summary,
+        myId,
+        pendingClaims,
+        myShare?.service_cents ?? 0,
+      )
+    : null;
+  const owes = optimistic?.total ?? myShare?.total_cents ?? 0;
   // The "you owe" total folds prorated tax, tip and service on top of the
   // claimed items — spell each part out with its own amount so the number
   // isn't a mystery.
-  const myItemCents = myShare?.item_subtotal_cents ?? 0;
-  const myTaxCents = myShare?.tax_cents ?? 0;
-  const myTipCents = myShare?.tip_cents ?? 0;
-  const myServiceCents = myShare?.service_cents ?? 0;
+  const myItemCents = optimistic?.items ?? myShare?.item_subtotal_cents ?? 0;
+  const myTaxCents = optimistic?.tax ?? myShare?.tax_cents ?? 0;
+  const myTipCents = optimistic?.tip ?? myShare?.tip_cents ?? 0;
+  const myServiceCents = optimistic?.service ?? myShare?.service_cents ?? 0;
   const extrasCents = myTaxCents + myTipCents + myServiceCents;
   const owedBreakdown = [
     `${fmt(myItemCents)} items`,
@@ -1058,21 +1106,34 @@ export default function FriendSplit() {
 
         <div className="col mt-4">
           {summary.items.map((it) => {
-            const claimers = summary.claims[it.id] ?? [];
-            const mineEntry = myId
-              ? claimers.find((c) => c.participant_id === myId)
-              : undefined;
-            const mine = !!mineEntry;
-            const myCount = mineEntry?.share_count ?? 1;
-            const others = claimers
+            // While a save is in flight, MY claim on this item comes from
+            // pendingClaims (the tap I just made); others' claims stay as
+            // the live summary shows them. This keeps the checkbox in sync
+            // with the user's intent without waiting for the API.
+            const liveClaimers = summary.claims[it.id] ?? [];
+            const myPending = pendingClaims?.get(it.id);
+            const others = liveClaimers
               .filter((c) => c.participant_id !== myId)
               .map((c) => ({
                 id: c.participant_id,
                 name: nameOf(c.participant_id),
               }));
+            let mine: boolean;
+            let myCount: number;
+            if (pendingClaims) {
+              mine = myPending !== undefined;
+              myCount = myPending ?? 1;
+            } else {
+              const mineEntry = myId
+                ? liveClaimers.find((c) => c.participant_id === myId)
+                : undefined;
+              mine = !!mineEntry;
+              myCount = mineEntry?.share_count ?? 1;
+            }
+            const claimerCount = others.length + (mine ? 1 : 0);
             // My effective denominator is never below the number of claimers,
             // so this matches the share the server computes.
-            const denom = Math.max(myCount, claimers.length);
+            const denom = Math.max(myCount, claimerCount);
             const youPay = Math.round(it.price_cents / denom);
             return (
               <div key={it.id} className={`claim-row${mine ? " mine" : ""}`}>
@@ -1184,4 +1245,51 @@ export default function FriendSplit() {
       {paySheet}
     </PaperApp>
   );
+}
+
+// optimisticShare projects what the friend's share will look like after the
+// pending claims hit the server. Mirrors internal/split.Compute's proration
+// (tax/tip and a percent service charge scale with the friend's item
+// subtotal) so the value differs from the eventual server value by at most a
+// largest-remainder cent. A fixed service charge stays on liveServiceCents —
+// it splits by headcount, not by claims.
+function optimisticShare(
+  bill: Bill,
+  summary: BillSummary,
+  myId: string | null,
+  claims: Map<string, number>,
+  liveServiceCents: number,
+): { total: number; items: number; tax: number; tip: number; service: number } {
+  let myItems = 0;
+  let totalSubtotal = 0;
+  for (const it of bill.items) {
+    totalSubtotal += it.price_cents;
+    const myShareCount = claims.get(it.id);
+    if (myShareCount === undefined) continue;
+    const others = (summary.claims[it.id] ?? []).filter(
+      (e) => e.participant_id !== myId,
+    ).length;
+    const denom = Math.max(myShareCount, others + 1);
+    myItems += Math.round(it.price_cents / denom);
+  }
+  const ratio = totalSubtotal > 0 ? myItems / totalSubtotal : 0;
+  const tax = Math.round(ratio * bill.tax_cents);
+  const tip = Math.round(ratio * bill.tip_cents);
+  let service = liveServiceCents;
+  if (
+    bill.service_charge_kind === "percent" &&
+    bill.service_charge_rate_bps > 0
+  ) {
+    const serviceTotal = Math.round(
+      (bill.service_charge_rate_bps * totalSubtotal) / 10000,
+    );
+    service = Math.round(ratio * serviceTotal);
+  }
+  return {
+    total: myItems + tax + tip + service,
+    items: myItems,
+    tax,
+    tip,
+    service,
+  };
 }
