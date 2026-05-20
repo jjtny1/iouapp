@@ -246,18 +246,19 @@ found`. Run `cd web && npm install` first, then type-check with
   (a login wall), not the app. Encode the `venmo://` app deep link in the QR
   — the camera opens it straight in the Venmo app. The `web_url` is only for
   paying on the desktop machine itself.
-- **History on the `venmo://paycharge` deeplink (for context if anyone
-  migrates again).** A beta tester once saw "We don't recognize that code.
-  Recheck and try again." from `venmo://paycharge?txn=pay&recipients=…`, and
-  the codebase briefly migrated to the modern
-  `https://venmo.com/<handle>?txn=pay&amount=…&note=…` Universal Link
-  (PR #28). That form has a separate display bug — its note renderer shows
-  BOTH `+` and `%20` as a literal `+` between every word (PR #29 and a
-  subsequent NBSP attempt both shipped visible regressions). We reverted to
-  the venmo:// deep link on a tester's recommendation that Venmo may have
-  fixed the "we don't recognize" error since. If that error returns and the
-  Universal Link's note bug is still present, the next move is to drop the
-  note from the URL entirely rather than fight either encoding bug.
+- **Don't migrate to the `https://venmo.com/<handle>?…` Universal Link.** It
+  has a note display bug: its renderer shows BOTH `+` and `%20` as a literal
+  `+` between every word of the prefilled note (`My+share+of+Cafe…`).
+  Confirmed Venmo-side by pasting the URL straight into Safari and letting it
+  open Venmo — not our server, not the SPA. History: PR #28 made the switch
+  after a beta tester saw "We don't recognize that code. Recheck and try
+  again." from the `venmo://paycharge` deeplink; PR #29 (%20) and a follow-up
+  NBSP attempt both shipped visible regressions. PR #32 reverted to the
+  deeplink — Venmo had since fixed the "we don't recognize" error, so the
+  deeplink (with its existing `+` → `%20` workaround) is the working format
+  as of 2026-05-19. If "we don't recognize" comes back AND the Universal
+  Link's note bug is still present, drop the note from the URL entirely
+  rather than fight either encoding bug.
 - **Don't build the production Docker image without `--platform linux/amd64`.**
   Apple Silicon Macs build arm64 images by default, but the Fargate task runs
   x86_64 — a native-arch image pushes fine, then the task dies on start with an
@@ -308,6 +309,22 @@ found`. Run `cd web && npm install` first, then type-check with
   silently did nothing. For the same reason, don't replace the whole editor
   with a full-screen processing view for an in-card action: it resets scroll
   position; run the processing animation inside the card.
+- **Don't drop the totalbar's repaint workarounds.** iOS Safari has a
+  position:sticky compositing bug: when only the inner _text_ of a sticky
+  element with a `box-shadow` changes, the layer isn't marked dirty, so the
+  new value sits in the DOM but doesn't paint until the user scrolls. Beta
+  tester surfaced this against `FriendSplit`'s "You owe" total after the
+  optimistic-claims change made the value update faster than a scroll. Two
+  belt-and-braces fixes both load-bearing:
+  1. `.totalbar` in `web/src/index.css` has `transform: translate3d(0,0,0)`
+     to promote it to its own compositing layer (iOS flushes the layer on
+     content updates that way).
+  2. The `<p className="amt">` in `FriendSplit.tsx` has `key={owes}` so React
+     unmounts/remounts the node on every value change — guarantees a DOM
+     swap iOS can't skip painting.
+     Either one alone may be enough, but both together survive future React /
+     CSS edits that might invalidate the other. Symptom to recognise: "value
+     only updates when I scroll."
 
 ## Learned Patterns
 
@@ -429,6 +446,27 @@ participant_id)` only and relies on the column's `DEFAULT 1`. That works
   because a host-assigned (auto-split) claim _is_ a whole-item claim — `1`
   is the semantically correct default. Don't change `share_count`'s default
   or meaning without auditing both INSERT sites.
+- **`FriendSplit` claim updates are optimistic, with a request counter to
+  resolve out-of-order responses.** `toggleItem` / `setShareCount` mutate a
+  fresh claims `Map` and call `saveClaims`, which stashes the map in a
+  `pendingClaims` state _before_ awaiting the API. The checkboxes, per-item
+  denominators, and the "You owe" total all read from `pendingClaims` when
+  it's set (else the live `summary`), so a tap shows immediately instead of
+  waiting on the round-trip. `saveReqRef` (a `useRef` counter) is bumped on
+  every save; the response handler only applies `setSummary` /
+  `setPendingClaims(null)` if its `myReq === saveReqRef.current`, so an
+  older save returning out of order can't clobber a newer summary. The
+  optimistic "you owe" number is computed by a helper `optimisticShare`
+  that mirrors `internal/split.Compute`'s proration (tax / tip and a
+  percent service charge scale with the friend's item subtotal) but skips
+  the largest-remainder pennies — the delta from the eventual server value
+  is ≤ 1¢ and snaps into place when the response lands. A fixed service
+  charge stays on the live summary's value since it splits by headcount,
+  not by claims. The previous synchronous `await api.setClaims → setSummary`
+  flow shipped a visible-wrong intermediate render AND had a small
+  fast-double-tap race that dropped the first claim — both are gone with
+  this pattern. (Pairs with the iOS sticky repaint workaround in Mistakes
+  to Avoid — without it the new optimistic value still wouldn't paint.)
 - **Auth is magic-link.** In `IOU_DEV=1` the link is returned in the JSON
   response. In prod it is emailed: `NewRouter` takes an `auth.EmailSender`,
   chosen by `IOU_MAIL_PROVIDER` — a log-only sender by default, or `SESSender`
