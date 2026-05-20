@@ -236,25 +236,28 @@ found`. Run `cd web && npm install` first, then type-check with
   unit; `price_cents` is that unit's full price. Multi-quantity receipt lines
   are expanded at parse time (see below), so nothing downstream multiplies by a
   quantity.
-- **Don't bring back the `venmo://paycharge?txn=pay&recipients=…` deep link,
-  and don't strip the `+` → `%20` workaround on the note.** Two separate
-  things, both load-bearing:
-  1. Venmo broke `venmo://paycharge?…` in 2024 — the current app reads it as
-     an unknown "Venmo Code" and shows "We don't recognize that code. Recheck
-     and try again." The working format `internal/payment` uses is the
-     Universal Link `https://venmo.com/<handle>?txn=pay&amount=…&note=…`
-     (path-based handle, NOT a `recipients=` query param). Venmo's iOS and
-     Android apps claim `venmo.com`, so the same https URL opens the app when
-     installed and falls back to venmo.com web otherwise — one link covers
-     phone taps, desktop click-throughs, and QR scans (a phone camera follows
-     the Universal Link straight into the Venmo app).
-  2. Even on the Universal Link, Venmo's note parser renders `+` literally
-     ("My+share+of+Cafe…"). `q.Encode()` form-encodes spaces as `+`, so the
-     note must percent-encode spaces as `%20` instead — `internal/payment`
-     does `strings.ReplaceAll(q.Encode(), "+", "%20")`. This was originally
-     noted for the `venmo://` scheme but it's still true for the new URL; an
-     early version of the migration dropped the replacement and shipped a
-     visible regression to production.
+- **Don't encode Venmo deep-link params with `url.Values.Encode()` alone.** It
+  form-encodes spaces as `+`, and Venmo's deep-link parser renders the `+`
+  literally in the payment note (`My+share+of+Cafe…`). Percent-encode spaces
+  as `%20` instead — `internal/payment` does
+  `strings.ReplaceAll(q.Encode(), "+", "%20")`.
+- **Don't put the `venmo.com` web link in the pay QR code.** A phone camera
+  scanning an `https://account.venmo.com/pay?…` link opens Venmo's _website_
+  (a login wall), not the app. Encode the `venmo://` app deep link in the QR
+  — the camera opens it straight in the Venmo app. The `web_url` is only for
+  paying on the desktop machine itself.
+- **History on the `venmo://paycharge` deeplink (for context if anyone
+  migrates again).** A beta tester once saw "We don't recognize that code.
+  Recheck and try again." from `venmo://paycharge?txn=pay&recipients=…`, and
+  the codebase briefly migrated to the modern
+  `https://venmo.com/<handle>?txn=pay&amount=…&note=…` Universal Link
+  (PR #28). That form has a separate display bug — its note renderer shows
+  BOTH `+` and `%20` as a literal `+` between every word (PR #29 and a
+  subsequent NBSP attempt both shipped visible regressions). We reverted to
+  the venmo:// deep link on a tester's recommendation that Venmo may have
+  fixed the "we don't recognize" error since. If that error returns and the
+  Universal Link's note bug is still present, the next move is to drop the
+  note from the URL entirely rather than fight either encoding bug.
 - **Don't build the production Docker image without `--platform linux/amd64`.**
   Apple Silicon Macs build arm64 images by default, but the Fargate task runs
   x86_64 — a native-arch image pushes fine, then the task dies on start with an
