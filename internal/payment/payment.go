@@ -42,38 +42,38 @@ func amountParam(cents int) string {
 	return fmt.Sprintf("%d.%02d", cents/100, cents%100)
 }
 
-// payURL builds the Venmo Universal Link that prefills a payment to handle for
-// amountCents with note. Venmo's iOS and Android apps claim venmo.com, so the
-// same https URL opens the app when installed and falls back to venmo.com web
-// otherwise — one link covers phones, desktop browsers, and QR scans.
-//
-// The legacy venmo://paycharge?txn=pay&recipients=… scheme this replaced
-// stopped working in 2024: the current Venmo app treats it as an unknown
-// "Venmo Code" and shows "We don't recognize that code. Recheck and try
-// again." The path-based handle (venmo.com/<user>) is the format Venmo's own
-// share links and docs use today.
-func payURL(handle string, amountCents int, note string) string {
+// payQuery builds the query string shared by the app deep link and the web
+// fallback. Spaces are percent-encoded as %20 rather than "+": Venmo's note
+// renderer shows form-encoded "+" literally otherwise.
+func payQuery(handle string, amountCents int, note string) string {
 	q := url.Values{}
 	q.Set("txn", "pay")
+	q.Set("recipients", handle)
 	q.Set("amount", amountParam(amountCents))
 	q.Set("note", note)
-	// Venmo's note parser renders "+" literally instead of as a space — even
-	// in the Universal Link form — so a form-encoded note shows up as
-	// "My+share+of+Cafe…" in the prefilled payment. Percent-encode spaces as
-	// %20 instead.
-	return "https://venmo.com/" + handle + "?" + strings.ReplaceAll(q.Encode(), "+", "%20")
+	return strings.ReplaceAll(q.Encode(), "+", "%20")
 }
 
-// AppURL builds the link used to hand a phone off to Venmo and the value
-// encoded into the desktop QR code. It is a Universal Link, so iOS / Android
-// open the Venmo app prefilled when installed.
+// AppURL builds the venmo:// deep link that opens the Venmo app prefilled to
+// pay handle the given amount with note. Used by the mobile "Open Venmo"
+// button and encoded into the desktop QR code (phone cameras follow the
+// scheme straight into the Venmo app).
+//
+// History: an early beta tester saw "We don't recognize that code. Recheck
+// and try again." from this exact URL, so the codebase briefly migrated to
+// the modern https://venmo.com/<handle>?… Universal Link. That form has a
+// separate display bug — its note renderer shows BOTH "+" and "%20" as a
+// literal "+" between every word — and after shipping two attempts at fixing
+// the note encoding, we reverted to the deep link in the hope Venmo had
+// fixed the "we don't recognize" error on their end. If the error returns,
+// retry with a different strategy (e.g. drop the note entirely so there's
+// no encoding to mangle and no URL pattern to misread).
 func AppURL(handle string, amountCents int, note string) string {
-	return payURL(handle, amountCents, note)
+	return "venmo://paycharge?" + payQuery(handle, amountCents, note)
 }
 
-// WebURL is the same Universal Link, exposed under a separate name for the
-// payment intent's web fallback field. On a desktop with no Venmo app it
-// opens venmo.com's web pay flow.
+// WebURL is the click-through for paying on a desktop with no Venmo app. It
+// opens Venmo's web pay flow prefilled with the same handle / amount / note.
 func WebURL(handle string, amountCents int, note string) string {
-	return payURL(handle, amountCents, note)
+	return "https://account.venmo.com/pay?" + payQuery(handle, amountCents, note)
 }
