@@ -538,6 +538,13 @@ a {
   gap: 12px;
   box-shadow: 0 12px 30px -12px rgba(31, 61, 43, 0.55);
   z-index: 30;
+  /* iOS Safari leaves a position:sticky element with a box-shadow on a
+     compositing layer that doesn't repaint when only inner text changes —
+     the friend would see a stale total until they scrolled. translate3d
+     promotes the bar to its own layer so iOS flushes the layer on each
+     content change. The amt <p> below also gets a React key={owes} as a
+     belt-and-braces remount. */
+  transform: translate3d(0, 0, 0);
 }
 .totalbar .label {
   font-family: var(--mono);
