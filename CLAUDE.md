@@ -236,16 +236,25 @@ found`. Run `cd web && npm install` first, then type-check with
   unit; `price_cents` is that unit's full price. Multi-quantity receipt lines
   are expanded at parse time (see below), so nothing downstream multiplies by a
   quantity.
-- **Don't bring back the `venmo://paycharge?txn=pay&recipients=…` deep link.**
-  Venmo broke that URL scheme in 2024 — the current app interprets it as an
-  unknown "Venmo Code" and shows "We don't recognize that code. Recheck and try
-  again." The working format `internal/payment` uses is the Universal Link
-  `https://venmo.com/<handle>?txn=pay&amount=…&note=…` (path-based handle,
-  not a `recipients=` query param). Venmo's iOS and Android apps claim
-  `venmo.com`, so the same https URL opens the app when installed and falls
-  back to venmo.com web otherwise — one link covers phones, desktop browsers,
-  and QR scans. The same URL is fine in the QR code: a phone camera follows the
-  Universal Link straight into the Venmo app.
+- **Don't bring back the `venmo://paycharge?txn=pay&recipients=…` deep link,
+  and don't strip the `+` → `%20` workaround on the note.** Two separate
+  things, both load-bearing:
+  1. Venmo broke `venmo://paycharge?…` in 2024 — the current app reads it as
+     an unknown "Venmo Code" and shows "We don't recognize that code. Recheck
+     and try again." The working format `internal/payment` uses is the
+     Universal Link `https://venmo.com/<handle>?txn=pay&amount=…&note=…`
+     (path-based handle, NOT a `recipients=` query param). Venmo's iOS and
+     Android apps claim `venmo.com`, so the same https URL opens the app when
+     installed and falls back to venmo.com web otherwise — one link covers
+     phone taps, desktop click-throughs, and QR scans (a phone camera follows
+     the Universal Link straight into the Venmo app).
+  2. Even on the Universal Link, Venmo's note parser renders `+` literally
+     ("My+share+of+Cafe…"). `q.Encode()` form-encodes spaces as `+`, so the
+     note must percent-encode spaces as `%20` instead — `internal/payment`
+     does `strings.ReplaceAll(q.Encode(), "+", "%20")`. This was originally
+     noted for the `venmo://` scheme but it's still true for the new URL; an
+     early version of the migration dropped the replacement and shipped a
+     visible regression to production.
 - **Don't build the production Docker image without `--platform linux/amd64`.**
   Apple Silicon Macs build arm64 images by default, but the Fargate task runs
   x86_64 — a native-arch image pushes fine, then the task dies on start with an

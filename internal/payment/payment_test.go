@@ -41,6 +41,12 @@ func TestAppURL(t *testing.T) {
 	if !strings.HasPrefix(got, "https://venmo.com/host-venmo?") {
 		t.Fatalf("AppURL = %q, want a https://venmo.com/host-venmo?… link", got)
 	}
+	// Venmo's note parser renders "+" literally instead of as a space, so the
+	// URL must percent-encode spaces as %20 — otherwise the prefilled note
+	// shows up as "My+share+of+Cafe…".
+	if strings.Contains(got, "+") {
+		t.Errorf("AppURL = %q, contains '+'; spaces must be %%20-encoded", got)
+	}
 	q := mustQuery(t, got)
 	if q.Get("txn") != "pay" {
 		t.Errorf("txn = %q, want pay", q.Get("txn"))
