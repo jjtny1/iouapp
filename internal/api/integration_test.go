@@ -745,12 +745,15 @@ func TestPayments(t *testing.T) {
 		if intent.PaymentID == "" {
 			t.Fatal("intent missing payment_id")
 		}
-		if !strings.HasPrefix(intent.AppURL, "venmo://") {
-			t.Errorf("app_url = %q, want a venmo:// link", intent.AppURL)
+		// Both fields are now the same venmo.com Universal Link — iOS /
+		// Android open the Venmo app, desktop falls back to venmo.com web.
+		// The legacy venmo://paycharge form they replaced was broken by
+		// Venmo in 2024 ("we don't recognize that code").
+		if !strings.Contains(intent.AppURL, "venmo.com/"+hostHandle) {
+			t.Errorf("app_url = %q, want a venmo.com/<handle> link", intent.AppURL)
 		}
-		if !strings.Contains(intent.WebURL, "venmo.com") ||
-			!strings.Contains(intent.WebURL, hostHandle) {
-			t.Errorf("web_url = %q, want a venmo.com link to the host", intent.WebURL)
+		if !strings.Contains(intent.WebURL, "venmo.com/"+hostHandle) {
+			t.Errorf("web_url = %q, want a venmo.com/<handle> link", intent.WebURL)
 		}
 		paymentID = intent.PaymentID
 	})
