@@ -1037,7 +1037,14 @@ export default function FriendSplit() {
           <div className="totalbar">
             <div>
               <p className="label">You owe</p>
-              <p className="amt">{fmt(owes)}</p>
+              {/* key={owes} forces React to remount this <p> when the value
+                  changes, which forces iOS Safari to repaint — without it,
+                  the sticky totalbar's compositing layer doesn't flush
+                  until the user scrolls (see CLAUDE.md: "iOS Safari sticky
+                  totalbar"). */}
+              <p className="amt" key={owes}>
+                {fmt(owes)}
+              </p>
               {owes > 0 && extrasCents > 0 && (
                 <p className="sub">{owedBreakdown}</p>
               )}
@@ -1227,7 +1234,12 @@ export default function FriendSplit() {
         <div className="totalbar">
           <div>
             <p className="label">You owe</p>
-            <p className="amt">{fmt(owes)}</p>
+            {/* key={owes} forces iOS Safari to repaint the sticky bar when
+                the value changes — see the matching note in the post-paid
+                view above. */}
+            <p className="amt" key={owes}>
+              {fmt(owes)}
+            </p>
             {owes > 0 && extrasCents > 0 && (
               <p className="sub">{owedBreakdown}</p>
             )}
