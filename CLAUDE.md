@@ -411,15 +411,19 @@ count)` shares — shares beyond the joined participants go to `unclaimed` so
   bill currency, and the amount in a Venmo link is its raw major-unit value
   (`amount_cents/100`). Venmo settles in USD only, so for a non-USD bill the
   prefilled amount is nominal — FX conversion is intentionally not done.
-- **`bills.status` is vestigial — always `'draft'`.** The column exists
-  (`schema.sql` defaults it to `'draft'`) and `PATCH /api/bills/{id}` still
-  accepts a `status` of `'draft'`/`'open'`, but nothing in the app ever
-  transitions it: not the editor's save, not a friend joining, not a payment.
-  The frontend doesn't send or display it. Treat it like the `payments`
-  table's `provider`/`tx_ref` columns — left in place, never read. Don't build
-  UI on `status` (the old Home page split tabs into "Open"/"Settled" on a
-  `status === 'settled'` that was never written) without first wiring a real
-  transition end to end.
+- **`bills.status` is the claim-mode settle-up switch.** A claim-mode bill is
+  `'draft'` (open — friends join and claim, every share provisional) until the
+  host **closes the tab**: `POST /api/bills/{id}/close {"closed":bool}`
+  (host-only, claim-mode only — 400 on a host-split bill) flips it to
+  `'closed'` and back. While closed, joins and `PUT …/claims` return 409, and
+  `POST …/pay` on a claim-mode bill _requires_ closed (409 "the tab is still
+  open" otherwise) — payment waits until shares are final. Host-split bills
+  skip the gate entirely (their shares are final at assignment) and stay
+  `'draft'`. The editor's Share step holds the close/reopen card; `FriendSplit`
+  polls the summary (8s) so friends see the tab close without a refresh. The
+  legacy `'open'` value is still accepted by PATCH but nothing writes it.
+  `handlePay`'s already-paid short-circuit deliberately runs _before_ the gate
+  so a settled friend still sees their receipt after a reopen.
 - **One item row = one claimable unit.** A receipt line with quantity N>1 is
   expanded at parse time by `receipt.Flatten` into N separate `qty=1` items
   named `Name (1 of N)` … `(N of N)`, each at the per-unit price. This lets

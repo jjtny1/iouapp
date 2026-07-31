@@ -108,6 +108,10 @@ func (s *Server) handleJoinBill(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this bill was split by the host"})
 		return
 	}
+	if b.Status == statusClosed {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "the host has closed this tab — it's settling up now"})
+		return
+	}
 
 	token, err := auth.NewToken()
 	if err != nil {
@@ -239,6 +243,12 @@ func (s *Server) handleSetClaims(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("set claims: load: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	// Once the host closes the tab every share is final — a claim change would
+	// silently move money between friends who may already be paying.
+	if b.Status == statusClosed {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "the host closed the tab — claims are locked"})
 		return
 	}
 

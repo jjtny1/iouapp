@@ -21,10 +21,18 @@ export type ServiceChargeKind = "none" | "percent" | "fixed";
 // split it (via the audio-split flow) and friends only pick their name + pay.
 export type SplitMode = "claim" | "host";
 
+// status is a claim-mode bill's settle-up switch: "draft" (and legacy "open")
+// means the tab is open — friends join and claim, every share provisional —
+// and "closed" means the host closed it: claims lock, shares are final, and
+// friends can pay. Host-split bills stay "draft"; their shares are final from
+// the moment the host assigns them.
+export type BillStatus = "draft" | "open" | "closed";
+
 export interface Bill {
   id: string;
   restaurant: string;
   currency: string;
+  status: BillStatus;
   tax_cents: number;
   tip_cents: number;
   service_charge_kind: ServiceChargeKind;
@@ -281,6 +289,14 @@ export const api = {
     }
     return body as AutoSplitResult;
   },
+  // closeBill flips a claim-mode tab between open (claiming) and closed
+  // (settle up): closed locks joins + claims and lets friends pay their final
+  // share. Returns the refreshed summary, whose bill carries the new status.
+  closeBill: (id: string, closed: boolean) =>
+    request<BillSummary>(`/api/bills/${id}/close`, {
+      method: "POST",
+      body: JSON.stringify({ closed }),
+    }),
   updateBill: (id: string, update: BillUpdate) =>
     request<Bill>(`/api/bills/${id}`, {
       method: "PATCH",

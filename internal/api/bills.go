@@ -19,6 +19,15 @@ import (
 
 const maxReceiptBytes = 10 << 20
 
+// Bill statuses. A claim-mode bill starts open ("draft" — friends join and
+// claim freely; every share is provisional) until the host closes the tab
+// ("closed"): claims and joins lock, shares become final, and friends can pay.
+// The host may reopen (back to "draft") to let claims change again.
+const (
+	statusDraft  = "draft"
+	statusClosed = "closed"
+)
+
 // supportedReceiptTypes are the image media types the receipt parser (the
 // Anthropic vision API) can read. HEIC is intentionally absent: iPhone HEIC
 // photos are converted to JPEG client-side before upload.
@@ -96,7 +105,7 @@ func (s *Server) handleCreateBill(w http.ResponseWriter, r *http.Request) {
 	b := bill{
 		ID:                uuid.NewString(),
 		Currency:          "USD",
-		Status:            "draft",
+		Status:            statusDraft,
 		CreatedAt:         time.Now().Unix(),
 		Items:             []billItem{},
 		ServiceChargeKind: "none",
@@ -477,7 +486,7 @@ func (s *Server) handleUpdateBill(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if req.Status != "" && req.Status != "draft" && req.Status != "open" {
+	if req.Status != "" && req.Status != statusDraft && req.Status != "open" && req.Status != statusClosed {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid status"})
 		return
 	}
@@ -521,6 +530,62 @@ func (s *Server) handleUpdateBill(w http.ResponseWriter, r *http.Request) {
 	}
 	b.Items = items
 	writeJSON(w, http.StatusOK, s.billJSON(b, true))
+}
+
+// handleCloseBill is the host's settle-up switch for a claim-mode bill.
+// Closing the tab locks joins and claims so every share is final, which is
+// what allows payment to open up; reopening unlocks claiming again. A
+// host-split bill has no claiming phase — its shares are final the moment the
+// host assigns them — so closing it is meaningless and rejected.
+func (s *Server) handleCloseBill(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value(userCtxKey).(user)
+	id := r.PathValue("id")
+
+	var req struct {
+		Closed bool `json:"closed"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	b, err := s.loadBill(r.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "bill not found"})
+		return
+	}
+	if err != nil {
+		log.Printf("close bill: load: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	if b.hostUserID != u.ID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
+	if b.SplitMode == "host" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "a host-split tab has no claiming to close"})
+		return
+	}
+
+	status := statusDraft
+	if req.Closed {
+		status = statusClosed
+	}
+	if _, err := s.DB.ExecContext(r.Context(),
+		`UPDATE bills SET status = ? WHERE id = ?`, status, b.ID); err != nil {
+		log.Printf("close bill: update: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	b.Status = status
+
+	resp, err := s.buildSummary(r.Context(), b)
+	if err != nil {
+		log.Printf("close bill: summary: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleDeleteBill(w http.ResponseWriter, r *http.Request) {

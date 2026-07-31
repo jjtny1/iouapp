@@ -675,6 +675,22 @@ func TestPayments(t *testing.T) {
 		map[string]any{"participant_token": partToken, "item_ids": []string{firstItemID}},
 		http.StatusOK, nil)
 
+	t.Run("pay fails with 409 while the tab is still open", func(t *testing.T) {
+		resp, raw := e.do(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/pay",
+			bytes.NewReader(mustJSON(t, map[string]string{"participant_token": partToken})),
+			"application/json")
+		if resp.StatusCode != http.StatusConflict {
+			t.Errorf("status = %d, want 409; body=%s", resp.StatusCode, raw)
+		}
+		if !strings.Contains(string(raw), "still open") {
+			t.Errorf("body = %s, want the still-open explanation", raw)
+		}
+	})
+
+	// The host closes the tab: claims lock, shares are final, payment opens.
+	e.doJSON(host, http.MethodPost, "/api/bills/"+billID+"/close",
+		map[string]bool{"closed": true}, http.StatusOK, nil)
+
 	t.Run("pay fails with 409 when host has no Venmo handle", func(t *testing.T) {
 		resp, raw := e.do(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/pay",
 			bytes.NewReader(mustJSON(t, map[string]string{"participant_token": partToken})),
@@ -838,6 +854,9 @@ func TestDeleteBill(t *testing.T) {
 
 	e.doJSON(host, http.MethodPatch, "/api/users/me",
 		map[string]string{"venmo_handle": "delete-test"}, http.StatusOK, nil)
+	// Close the tab so payment is allowed on this claim-mode bill.
+	e.doJSON(host, http.MethodPost, "/api/bills/"+billID+"/close",
+		map[string]bool{"closed": true}, http.StatusOK, nil)
 	// /pay returns the Venmo payment intent and inserts a payment row.
 	e.doJSON(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/pay",
 		map[string]string{"participant_token": joinResp.ParticipantToken},
@@ -1062,6 +1081,127 @@ func TestAutoSplitText(t *testing.T) {
 	}
 }
 
+// TestCloseTab drives the settle-up lifecycle of a claim-mode bill: while the
+// tab is open friends join and claim freely; closing it locks joins and claims
+// (and is what unlocks payment — covered in TestPayments); reopening unlocks
+// claiming again.
+func TestCloseTab(t *testing.T) {
+	e := newTestEnv(t)
+	host := e.signIn("host@example.com")
+	bill := e.createBill(host)
+	billID := bill["id"].(string)
+	friendToken := bill["friend_token"].(string)
+	e.uploadReceipt(host, billID, http.StatusOK, nil)
+
+	var friendBill map[string]any
+	e.doJSON(e.newClient(), http.MethodGet, "/api/by-token/"+friendToken,
+		nil, http.StatusOK, &friendBill)
+	if friendBill["status"] != "draft" {
+		t.Errorf("new bill status = %v, want draft", friendBill["status"])
+	}
+	itemsRaw := friendBill["items"].([]any)
+	if len(itemsRaw) < 2 {
+		t.Fatalf("need >= 2 items, got %d", len(itemsRaw))
+	}
+	item0ID := itemsRaw[0].(map[string]any)["id"].(string)
+	item1ID := itemsRaw[1].(map[string]any)["id"].(string)
+
+	var join struct {
+		ParticipantToken string `json:"participant_token"`
+	}
+	e.doJSON(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/participants",
+		map[string]string{"display_name": "Alice", "t": friendToken},
+		http.StatusCreated, &join)
+	e.doJSON(e.newClient(), http.MethodPut, "/api/bills/"+billID+"/claims",
+		map[string]any{"participant_token": join.ParticipantToken,
+			"item_ids": []string{item0ID}}, http.StatusOK, nil)
+
+	t.Run("close requires auth and the host", func(t *testing.T) {
+		resp, _ := e.do(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/close",
+			bytes.NewReader(mustJSON(t, map[string]bool{"closed": true})), "application/json")
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("unauthenticated close: status = %d, want 401", resp.StatusCode)
+		}
+		other := e.signIn("intruder@example.com")
+		resp2, _ := e.do(other, http.MethodPost, "/api/bills/"+billID+"/close",
+			bytes.NewReader(mustJSON(t, map[string]bool{"closed": true})), "application/json")
+		if resp2.StatusCode != http.StatusForbidden {
+			t.Errorf("non-host close: status = %d, want 403", resp2.StatusCode)
+		}
+	})
+
+	t.Run("host closes the tab", func(t *testing.T) {
+		var summary struct {
+			Bill struct {
+				Status string `json:"status"`
+			} `json:"bill"`
+		}
+		e.doJSON(host, http.MethodPost, "/api/bills/"+billID+"/close",
+			map[string]bool{"closed": true}, http.StatusOK, &summary)
+		if summary.Bill.Status != "closed" {
+			t.Errorf("status after close = %q, want closed", summary.Bill.Status)
+		}
+	})
+
+	t.Run("claims are locked while closed", func(t *testing.T) {
+		resp, raw := e.do(e.newClient(), http.MethodPut, "/api/bills/"+billID+"/claims",
+			bytes.NewReader(mustJSON(t, map[string]any{
+				"participant_token": join.ParticipantToken,
+				"item_ids":          []string{item0ID, item1ID},
+			})), "application/json")
+		if resp.StatusCode != http.StatusConflict {
+			t.Errorf("claim on closed tab: status = %d, want 409; body=%s", resp.StatusCode, raw)
+		}
+	})
+
+	t.Run("joins are locked while closed", func(t *testing.T) {
+		resp, raw := e.do(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/participants",
+			bytes.NewReader(mustJSON(t, map[string]string{
+				"display_name": "Latecomer", "t": friendToken,
+			})), "application/json")
+		if resp.StatusCode != http.StatusConflict {
+			t.Errorf("join closed tab: status = %d, want 409; body=%s", resp.StatusCode, raw)
+		}
+	})
+
+	t.Run("reopening unlocks claims", func(t *testing.T) {
+		e.doJSON(host, http.MethodPost, "/api/bills/"+billID+"/close",
+			map[string]bool{"closed": false}, http.StatusOK, nil)
+		e.doJSON(e.newClient(), http.MethodPut, "/api/bills/"+billID+"/claims",
+			map[string]any{"participant_token": join.ParticipantToken,
+				"item_ids": []string{item0ID, item1ID}}, http.StatusOK, nil)
+	})
+
+	t.Run("a host-split tab cannot be closed", func(t *testing.T) {
+		hostBill := e.createBill(host)
+		hostBillID := hostBill["id"].(string)
+		e.uploadReceipt(host, hostBillID, http.StatusOK, nil)
+
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		if err := mw.WriteField("text", "Sam had everything."); err != nil {
+			t.Fatalf("write text field: %v", err)
+		}
+		if err := mw.WriteField("host_name", "Sam"); err != nil {
+			t.Fatalf("write host_name field: %v", err)
+		}
+		if err := mw.Close(); err != nil {
+			t.Fatalf("close multipart writer: %v", err)
+		}
+		resp, raw := e.do(host, http.MethodPost,
+			"/api/bills/"+hostBillID+"/auto-split", &buf, mw.FormDataContentType())
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("auto split: status = %d, want 200; body=%s", resp.StatusCode, raw)
+		}
+
+		resp2, raw2 := e.do(host, http.MethodPost, "/api/bills/"+hostBillID+"/close",
+			bytes.NewReader(mustJSON(t, map[string]bool{"closed": true})), "application/json")
+		if resp2.StatusCode != http.StatusBadRequest {
+			t.Errorf("close host-split tab: status = %d, want 400; body=%s", resp2.StatusCode, raw2)
+		}
+	})
+}
+
 // joinedTabResp mirrors the GET /api/bills/joined payload.
 type joinedTabResp struct {
 	BillID        string `json:"bill_id"`
@@ -1138,6 +1278,9 @@ func TestJoinedTabs(t *testing.T) {
 	t.Run("payment status reflects on the joined tab", func(t *testing.T) {
 		e.doJSON(host, http.MethodPatch, "/api/users/me",
 			map[string]string{"venmo_handle": "hostvenmo"}, http.StatusOK, nil)
+		// Paying a claim-mode bill requires the host to close the tab first.
+		e.doJSON(host, http.MethodPost, "/api/bills/"+billID+"/close",
+			map[string]bool{"closed": true}, http.StatusOK, nil)
 		var intent struct {
 			PaymentID string `json:"payment_id"`
 		}
