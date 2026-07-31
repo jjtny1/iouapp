@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, type Bill } from "../api";
+import { api, type Bill, type JoinedTab } from "../api";
 import { useAuth } from "../auth";
 import { formatMoney } from "../money";
 import { Avatar, Brand, Icon, PaperApp } from "../ui";
@@ -137,6 +137,48 @@ function TabRow({
   );
 }
 
+// JoinedTabRow renders one tab the user joined as a friend (not as host). It
+// has no delete handle — only the host can delete a tab — and shows a status
+// badge: the amount still owed, or "Paid" once settled.
+function JoinedTabRow({ tab, onOpen }: { tab: JoinedTab; onOpen: () => void }) {
+  const paid = tab.payment_status === "paid";
+  return (
+    <div className="tab tab-card">
+      <button className="tab-face" onClick={onOpen}>
+        <div
+          className="row row-between gap-3"
+          style={{ alignItems: "flex-start" }}
+        >
+          <div className="flex1">
+            <p className="h-card truncate">
+              {tab.restaurant || "Untitled tab"}
+            </p>
+            <p
+              className="mono"
+              style={{ margin: "4px 0 0", fontSize: 11, color: "var(--muted)" }}
+            >
+              {formatDate(tab.created_at)} · as {tab.display_name}
+            </p>
+          </div>
+          <span
+            className="mono"
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              flexShrink: 0,
+              color: paid ? "var(--muted)" : undefined,
+            }}
+          >
+            {paid
+              ? "Paid ✓"
+              : `You owe ${formatMoney(tab.owed_cents, tab.currency)}`}
+          </span>
+        </div>
+      </button>
+    </div>
+  );
+}
+
 export default function Home() {
   const { user, setUser } = useAuth();
   const navigate = useNavigate();
@@ -144,6 +186,7 @@ export default function Home() {
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [bills, setBills] = useState<Bill[]>([]);
+  const [joined, setJoined] = useState<JoinedTab[]>([]);
   const [creating, setCreating] = useState(false);
   const [showVenmo, setShowVenmo] = useState(false);
 
@@ -152,6 +195,10 @@ export default function Home() {
       .listBills()
       .then(setBills)
       .catch(() => setBills([]));
+    api
+      .joinedTabs()
+      .then(setJoined)
+      .catch(() => setJoined([]));
   }, []);
 
   if (!user) return null;
@@ -230,6 +277,25 @@ export default function Home() {
                 onDelete={() => deleteBill(b.id)}
               />
             ))}
+          </div>
+        )}
+
+        {/* Tabs the user joined as a friend on someone else's share link */}
+        {joined.length > 0 && (
+          <div className="mt-8">
+            <h2 className="h-section">Tabs you joined.</h2>
+            <p className="body muted mt-1">
+              Bills friends shared with you. Tap to view or pay your share.
+            </p>
+            <div className="col gap-2 mt-4">
+              {joined.map((t) => (
+                <JoinedTabRow
+                  key={t.participant_id}
+                  tab={t}
+                  onOpen={() => navigate(`/b/${t.friend_token}`)}
+                />
+              ))}
+            </div>
           </div>
         )}
 

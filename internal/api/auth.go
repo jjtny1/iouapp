@@ -144,7 +144,14 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 		Expires:  now.Add(auth.SessionTTL),
 		MaxAge:   int(auth.SessionTTL.Seconds()),
 	})
-	writeJSON(w, http.StatusOK, u)
+	// The session cookie above authenticates the web app (same-origin). The
+	// native iOS app is cross-origin and gets no cookie, so the token is also
+	// returned in the body for it to store and send as a bearer token; the
+	// web app simply ignores the extra field.
+	writeJSON(w, http.StatusOK, struct {
+		user
+		Token string `json:"token"`
+	}{u, sessionToken})
 }
 
 func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
@@ -157,9 +164,9 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie(auth.SessionCookie); err == nil {
+	if token := sessionToken(r); token != "" {
 		if _, err := s.DB.ExecContext(r.Context(),
-			`DELETE FROM sessions WHERE token = ?`, c.Value); err != nil {
+			`DELETE FROM sessions WHERE token = ?`, token); err != nil {
 			log.Printf("logout: delete session: %v", err)
 		}
 	}
@@ -237,18 +244,33 @@ func (s *Server) userByEmail(ctx context.Context, email string) (user, error) {
 	return u, err
 }
 
-// currentUser resolves the authenticated user from the session cookie.
+// sessionToken extracts the session token from the request. The web app
+// sends it in the session cookie (same-origin); the native iOS app is
+// cross-origin, gets no cookie, and sends it as an Authorization bearer
+// token instead.
+func sessionToken(r *http.Request) string {
+	if c, err := r.Cookie(auth.SessionCookie); err == nil && c.Value != "" {
+		return c.Value
+	}
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
+	}
+	return ""
+}
+
+// currentUser resolves the authenticated user from the session cookie or
+// bearer token.
 func (s *Server) currentUser(r *http.Request) (user, bool) {
-	c, err := r.Cookie(auth.SessionCookie)
-	if err != nil || c.Value == "" {
+	token := sessionToken(r)
+	if token == "" {
 		return user{}, false
 	}
 	var u user
 	var expiresAt int64
-	err = s.DB.QueryRowContext(r.Context(),
+	err := s.DB.QueryRowContext(r.Context(),
 		`SELECT u.id, u.email, u.venmo_handle, sessions.expires_at
 		 FROM sessions JOIN users u ON u.id = sessions.user_id
-		 WHERE sessions.token = ?`, c.Value).
+		 WHERE sessions.token = ?`, token).
 		Scan(&u.ID, &u.Email, &u.VenmoHandle, &expiresAt)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {

@@ -22,16 +22,19 @@ and claim what they ordered, and each settles their prorated share.
 **Stack**: Go (`net/http` + SQLite via pure-Go `modernc.org/sqlite`) single
 binary that also serves the SPA; React + TypeScript + Vite frontend in `web/`.
 Packages: `internal/{api,auth,db,config,receipt,transcribe,autosplit,payment,split}`.
+The same SPA also ships as a native iOS app — a Capacitor wrapper in `web/ios/`
+(see "iOS app (Capacitor)" below).
 
 ## Commands
 
-| Command                                           | Description                      |
-| ------------------------------------------------- | -------------------------------- |
-| `IOU_DEV=1 go run ./cmd/server`                   | Start API on :8080 (dev mode)    |
-| `cd web && npm run dev`                           | Start Vite dev server on :5173   |
-| `go test ./...`                                   | Run Go tests                     |
-| `cd web && npm run build`                         | Build the frontend to `web/dist` |
-| `cd web && npx tsc -p tsconfig.app.json --noEmit` | Type-check the frontend          |
+| Command                                           | Description                        |
+| ------------------------------------------------- | ---------------------------------- |
+| `IOU_DEV=1 go run ./cmd/server`                   | Start API on :8080 (dev mode)      |
+| `cd web && npm run dev`                           | Start Vite dev server on :5173     |
+| `go test ./...`                                   | Run Go tests                       |
+| `cd web && npm run build`                         | Build the frontend to `web/dist`   |
+| `cd web && npx tsc -p tsconfig.app.json --noEmit` | Type-check the frontend            |
+| `cd web && npm run sync:ios`                      | Build the SPA for iOS + sync Xcode |
 
 Receipt parsing uses the Anthropic vision API and needs `ANTHROPIC_API_KEY`;
 without it the app falls back to `receipt.StubParser` (a fixed sample receipt).
@@ -124,6 +127,52 @@ browser hits the Go server directly, no Vite proxy.
 
 ---
 
+## iOS app (Capacitor)
+
+The SPA also ships as a **native iOS app** — a Capacitor 7 wrapper around the
+same Vite build, Xcode project in `web/ios/`. Capacitor 7, _not_ 8: v8 needs
+Node 22 and the project is pinned to Node 20. CocoaPods is required
+(`brew install cocoapods`).
+
+- **Build & run**: `cd web && npm run sync:ios` builds the SPA against the live
+  API and copies it into the Xcode project; then open
+  `web/ios/App/App.xcworkspace` and Run. `npm run build:ios` is the build step
+  alone.
+- **The native app bundles a frozen snapshot of the web build** at
+  `web/ios/App/App/public/` — it does NOT auto-update from prod the way the
+  website does. After any web change lands, run `npm run sync:ios` and rebuild
+  in Xcode, or the app keeps serving stale web code. If a sync doesn't seem to
+  take, Xcode is caching the bundle — Product → Clean Build Folder.
+- **The native app is cross-origin with the API** — the WebView is served from
+  `capacitor://localhost`, the API is `https://iouapp.ai`. Three consequences,
+  all already wired: the SPA's API base is `VITE_API_BASE` (empty for the web
+  build → relative `/api`; set to the live URL by `build:ios`); the Go backend
+  has a `cors` middleware allowing the `capacitor://localhost` origin; and the
+  native build authenticates with an `Authorization: Bearer` token, since the
+  cross-site session cookie isn't sent — `verify` returns the token,
+  `currentUser`/`logout` also accept the bearer header. The web app is
+  unchanged: same-origin, cookie auth.
+- **Universal Links** carry magic-link sign-in into the app. The server
+  publishes `/.well-known/apple-app-site-association` when `IOU_APPLE_APP_ID`
+  (`<TeamID>.ai.iouapp.app`) is set; `DeepLinkHandler` in `App.tsx` routes the
+  Capacitor `appUrlOpen` event to the SPA's `/auth/verify` route. For dev the
+  entitlement is `applinks:iouapp.ai?mode=developer` — it bypasses Apple's CDN,
+  which negative-caches a failed AASA fetch for an hour, and needs the device
+  toggle Settings → Developer → Associated Domains Development. **Revert it to
+  plain `applinks:iouapp.ai` before an App Store build.**
+- **Don't let content render under the status bar.** The Capacitor WebView is
+  full-screen; `index.html` sets `viewport-fit=cover` and `.paper-app` pads
+  with `env(safe-area-inset-*)` so content clears the notch / home indicator.
+  These insets are 0 in a desktop browser, so the web layout is unaffected.
+- **Don't enlarge the receipt-editor inputs to stop iOS focus-zoom.** iOS
+  auto-zooms into any focused input under 16px, and an app-switch mid-zoom
+  (tapping the magic-link email) leaves the WebView stuck zoomed in. The
+  receipt inputs are deliberately small, so instead `main.tsx` disables
+  WebView zoom on native only (`maximum-scale=1, user-scalable=no`, gated by
+  `Capacitor.isNativePlatform()`), leaving the web app zoomable.
+
+---
+
 ## Mistakes to Avoid
 
 - **Don't use `heic2any` for HEIC conversion.** Its bundled libheif is outdated
@@ -189,14 +238,27 @@ found`. Run `cd web && npm install` first, then type-check with
   quantity.
 - **Don't encode Venmo deep-link params with `url.Values.Encode()` alone.** It
   form-encodes spaces as `+`, and Venmo's deep-link parser renders the `+`
-  literally in the payment note (`My+share+of+Cafe…`). Percent-encode spaces as
-  `%20` instead — `internal/payment` does
+  literally in the payment note (`My+share+of+Cafe…`). Percent-encode spaces
+  as `%20` instead — `internal/payment` does
   `strings.ReplaceAll(q.Encode(), "+", "%20")`.
 - **Don't put the `venmo.com` web link in the pay QR code.** A phone camera
-  scanning an `https://account.venmo.com/pay?…` link opens Venmo's _website_ (a
-  login wall), not the app. Encode the `venmo://` app deep link in the QR — the
-  camera opens it straight in the Venmo app. The `web_url` is only for paying on
-  the desktop machine itself.
+  scanning an `https://account.venmo.com/pay?…` link opens Venmo's _website_
+  (a login wall), not the app. Encode the `venmo://` app deep link in the QR
+  — the camera opens it straight in the Venmo app. The `web_url` is only for
+  paying on the desktop machine itself.
+- **Don't migrate to the `https://venmo.com/<handle>?…` Universal Link.** It
+  has a note display bug: its renderer shows BOTH `+` and `%20` as a literal
+  `+` between every word of the prefilled note (`My+share+of+Cafe…`).
+  Confirmed Venmo-side by pasting the URL straight into Safari and letting it
+  open Venmo — not our server, not the SPA. History: PR #28 made the switch
+  after a beta tester saw "We don't recognize that code. Recheck and try
+  again." from the `venmo://paycharge` deeplink; PR #29 (%20) and a follow-up
+  NBSP attempt both shipped visible regressions. PR #32 reverted to the
+  deeplink — Venmo had since fixed the "we don't recognize" error, so the
+  deeplink (with its existing `+` → `%20` workaround) is the working format
+  as of 2026-05-19. If "we don't recognize" comes back AND the Universal
+  Link's note bug is still present, drop the note from the URL entirely
+  rather than fight either encoding bug.
 - **Don't build the production Docker image without `--platform linux/amd64`.**
   Apple Silicon Macs build arm64 images by default, but the Fargate task runs
   x86_64 — a native-arch image pushes fine, then the task dies on start with an
@@ -247,6 +309,22 @@ found`. Run `cd web && npm install` first, then type-check with
   silently did nothing. For the same reason, don't replace the whole editor
   with a full-screen processing view for an in-card action: it resets scroll
   position; run the processing animation inside the card.
+- **Don't drop the totalbar's repaint workarounds.** iOS Safari has a
+  position:sticky compositing bug: when only the inner _text_ of a sticky
+  element with a `box-shadow` changes, the layer isn't marked dirty, so the
+  new value sits in the DOM but doesn't paint until the user scrolls. Beta
+  tester surfaced this against `FriendSplit`'s "You owe" total after the
+  optimistic-claims change made the value update faster than a scroll. Two
+  belt-and-braces fixes both load-bearing:
+  1. `.totalbar` in `web/src/index.css` has `transform: translate3d(0,0,0)`
+     to promote it to its own compositing layer (iOS flushes the layer on
+     content updates that way).
+  2. The `<p className="amt">` in `FriendSplit.tsx` has `key={owes}` so React
+     unmounts/remounts the node on every value change — guarantees a DOM
+     swap iOS can't skip painting.
+     Either one alone may be enough, but both together survive future React /
+     CSS edits that might invalidate the other. Symptom to recognise: "value
+     only updates when I scroll."
 
 ## Learned Patterns
 
@@ -293,11 +371,13 @@ NOT EXISTS` never alters an existing table, so a column added only to
 - **Payments are Venmo hand-offs.** The host saves a `venmo_handle` on their
   user row (set in the bill editor or on the Home page; new tabs reuse it).
   `POST /pay` returns a payment intent — the host's handle, the amount owed,
-  and `app_url` (`venmo://`) / `web_url` (`account.venmo.com`) deep links built
-  by `internal/payment`. Phones open `app_url` directly; the desktop pay sheet
-  shows a QR code that _also_ encodes `app_url` (so a scanning phone lands in
-  the Venmo app), with `web_url` only as a click-through for paying on the
-  desktop itself. Venmo reports nothing back, so a payment is marked paid by
+  and `app_url` / `web_url` (both the same `https://venmo.com/<handle>?txn=pay…`
+  Universal Link, since Venmo broke the legacy `venmo://paycharge?…` scheme —
+  see the matching note in Mistakes to Avoid). The two fields stay separate in
+  the API for the existing intent shape. Phones open `app_url` directly (iOS /
+  Android route the Universal Link into the app); the desktop pay sheet shows a
+  QR code that encodes `app_url` (a scanning phone follows it into the app);
+  `web_url` is the click-through for paying on the desktop itself. Venmo reports nothing back, so a payment is marked paid by
   the friend's self-report (`POST /pay/confirm`, no proof) or by the host
   toggling it (`POST /bills/{id}/payments/{pid}` with `{"paid":bool}`). The
   `payments` table keeps vestigial `provider`/`tx_ref` columns from the earlier
@@ -370,6 +450,27 @@ participant_id)` only and relies on the column's `DEFAULT 1`. That works
   because a host-assigned (auto-split) claim _is_ a whole-item claim — `1`
   is the semantically correct default. Don't change `share_count`'s default
   or meaning without auditing both INSERT sites.
+- **`FriendSplit` claim updates are optimistic, with a request counter to
+  resolve out-of-order responses.** `toggleItem` / `setShareCount` mutate a
+  fresh claims `Map` and call `saveClaims`, which stashes the map in a
+  `pendingClaims` state _before_ awaiting the API. The checkboxes, per-item
+  denominators, and the "You owe" total all read from `pendingClaims` when
+  it's set (else the live `summary`), so a tap shows immediately instead of
+  waiting on the round-trip. `saveReqRef` (a `useRef` counter) is bumped on
+  every save; the response handler only applies `setSummary` /
+  `setPendingClaims(null)` if its `myReq === saveReqRef.current`, so an
+  older save returning out of order can't clobber a newer summary. The
+  optimistic "you owe" number is computed by a helper `optimisticShare`
+  that mirrors `internal/split.Compute`'s proration (tax / tip and a
+  percent service charge scale with the friend's item subtotal) but skips
+  the largest-remainder pennies — the delta from the eventual server value
+  is ≤ 1¢ and snaps into place when the response lands. A fixed service
+  charge stays on the live summary's value since it splits by headcount,
+  not by claims. The previous synchronous `await api.setClaims → setSummary`
+  flow shipped a visible-wrong intermediate render AND had a small
+  fast-double-tap race that dropped the first claim — both are gone with
+  this pattern. (Pairs with the iOS sticky repaint workaround in Mistakes
+  to Avoid — without it the new optimistic value still wouldn't paint.)
 - **Auth is magic-link.** In `IOU_DEV=1` the link is returned in the JSON
   response. In prod it is emailed: `NewRouter` takes an `auth.EmailSender`,
   chosen by `IOU_MAIL_PROVIDER` — a log-only sender by default, or `SESSender`

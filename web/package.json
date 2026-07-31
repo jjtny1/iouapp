@@ -6,10 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:ios": "tsc -b && VITE_API_BASE=https://iouapp.ai vite build",
+    "sync:ios": "npm run build:ios && cap sync ios",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/core": "^7.6.5",
+    "@capacitor/ios": "^7.6.5",
     "heic-to": "^1.4.2",
     "qrcode": "^1.5.4",
     "react": "^19.2.6",
@@ -17,6 +22,7 @@
     "react-router-dom": "^7.15.1"
   },
   "devDependencies": {
+    "@capacitor/cli": "^7.6.5",
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.12.3",
     "@types/qrcode": "^1.5.5",

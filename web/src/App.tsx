@@ -1,5 +1,13 @@
-import type { ReactNode } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { useEffect, type ReactNode } from "react";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useNavigate,
+} from "react-router-dom";
+import { App as CapacitorApp } from "@capacitor/app";
+import { Capacitor } from "@capacitor/core";
 import "./App.css";
 import { AuthProvider, useAuth } from "./auth";
 import BillEditor from "./pages/BillEditor";
@@ -29,10 +37,35 @@ function Protected({ children }: { children: ReactNode }) {
   return user ? <>{children}</> : <Navigate to="/signin" replace />;
 }
 
+// DeepLinkHandler routes Universal Links into the SPA. When a magic-link email
+// is tapped on a device with the app installed, iOS opens the app (not Safari)
+// and fires `appUrlOpen` with the full https://iouapp.ai/auth/verify?token=…
+// URL; we navigate the in-app router to that path so the Verify page signs the
+// user in. No-op on the web build, where /auth/verify just loads normally.
+function DeepLinkHandler() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const handle = CapacitorApp.addListener("appUrlOpen", ({ url }) => {
+      try {
+        const parsed = new URL(url);
+        navigate(parsed.pathname + parsed.search, { replace: true });
+      } catch {
+        // Ignore payloads that are not URLs.
+      }
+    });
+    return () => {
+      void handle.then((h) => h.remove());
+    };
+  }, [navigate]);
+  return null;
+}
+
 function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <DeepLinkHandler />
         <Routes>
           <Route
             path="/"

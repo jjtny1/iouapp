@@ -12,6 +12,10 @@ type Config struct {
 	MailProvider string
 	MailFrom     string
 	AWSRegion    string
+	// AppleAppID is the iOS app's "<TeamID>.<bundleID>" identifier. When set,
+	// the server publishes an Apple App Site Association file so the native
+	// app can handle iouapp.ai Universal Links (magic-link sign-in).
+	AppleAppID string
 }
 
 func Load() Config {
@@ -25,6 +29,7 @@ func Load() Config {
 		MailProvider: env("IOU_MAIL_PROVIDER", "log"),
 		MailFrom:     os.Getenv("IOU_MAIL_FROM"),
 		AWSRegion:    os.Getenv("AWS_REGION"),
+		AppleAppID:   os.Getenv("IOU_APPLE_APP_ID"),
 	}
 }
 

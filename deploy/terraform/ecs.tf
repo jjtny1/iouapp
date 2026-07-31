@@ -66,6 +66,9 @@ resource "aws_ecs_task_definition" "app" {
         { name = "IOU_MAIL_PROVIDER", value = "ses" },
         { name = "IOU_MAIL_FROM", value = var.mail_from_address },
         { name = "AWS_REGION", value = var.aws_region },
+        # Enables the Apple App Site Association file so the iOS app handles
+        # iouapp.ai Universal Links (magic-link sign-in). "<TeamID>.<bundleID>".
+        { name = "IOU_APPLE_APP_ID", value = "25Z4M6ZS36.ai.iouapp.app" },
       ]
 
       secrets = [

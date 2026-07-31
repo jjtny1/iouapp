@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS items (
 );
 
 -- Phase 3: friend split flow.
+-- user_id links the participant to the account of the friend who joined
+-- while logged in; NULL when the friend has no account (joining never
+-- requires one). It powers the "tabs you joined" list on Home.
 CREATE TABLE IF NOT EXISTS participants (
     id                TEXT PRIMARY KEY,
     bill_id           TEXT NOT NULL REFERENCES bills(id),
@@ -65,6 +68,7 @@ CREATE TABLE IF NOT EXISTS participants (
     participant_token TEXT NOT NULL UNIQUE,
     host_managed      INTEGER NOT NULL DEFAULT 0,
     is_host           INTEGER NOT NULL DEFAULT 0,
+    user_id           TEXT REFERENCES users(id),
     created_at        INTEGER NOT NULL
 );
 

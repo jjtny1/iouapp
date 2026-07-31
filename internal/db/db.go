@@ -36,6 +36,11 @@ var migrations = []string{
 	`ALTER TABLE bills ADD COLUMN split_prompt TEXT`,
 	`ALTER TABLE participants ADD COLUMN host_managed INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE participants ADD COLUMN is_host INTEGER NOT NULL DEFAULT 0`,
+	// user_id links a participant to the IOU account of the friend who joined
+	// (or, on a host-split bill, picked that identity) while logged in. It
+	// stays NULL for friends with no account, so joining never requires one;
+	// when set it lets Home show the user the tabs they joined.
+	`ALTER TABLE participants ADD COLUMN user_id TEXT REFERENCES users(id)`,
 }
 
 type DB struct {
