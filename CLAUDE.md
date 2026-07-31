@@ -366,8 +366,12 @@ NOT EXISTS` never alters an existing table, so a column added only to
   themselves). For a `split_mode='host'` bill `handleJoinBill` rejects new
   joins, and the summary exposes each `participant_token` (gated by the share
   token) so a friend opens the link, picks their name, and pays without ever
-  self-claiming. The auto-split editor must run _after_ items are saved —
-  editing items afterward hits the `claims` foreign-key issue below.
+  self-claiming. A **closed claim tab exposes the tokens the same way** — the
+  share link then shows the same tap-your-name roster (`FriendSplit` unifies
+  the two in one picker branch), so a friend on a device that never joined can
+  still pay; while a claim tab is open the tokens stay private. The auto-split
+  editor must run _after_ items are saved — editing items afterward hits the
+  `claims` foreign-key issue below.
 - **Payments are Venmo hand-offs.** The host saves a `venmo_handle` on their
   user row (set in the bill editor or on the Home page; new tabs reuse it).
   `POST /pay` returns a payment intent — the host's handle, the amount owed,
@@ -420,7 +424,9 @@ count)` shares — shares beyond the joined participants go to `unclaimed` so
   open" otherwise) — payment waits until shares are final. Host-split bills
   skip the gate entirely (their shares are final at assignment) and stay
   `'draft'`. The editor's Share step holds the close/reopen card; `FriendSplit`
-  polls the summary (8s) so friends see the tab close without a refresh. The
+  polls the summary (8s) so friends see the tab close without a refresh; once
+  closed, the share link shows the tap-your-name pay roster (see host-managed
+  participants below). The
   legacy `'open'` value is still accepted by PATCH but nothing writes it.
   `handlePay`'s already-paid short-circuit deliberately runs _before_ the gate
   so a settled friend still sees their receipt after a reopen.

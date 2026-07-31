@@ -495,9 +495,14 @@ func (s *Server) buildSummary(ctx context.Context, b bill) (map[string]any, erro
 		if pay, ok := byParticipant[p.ID]; ok {
 			entry["payment_status"] = pay.Status
 		}
-		// The per-participant token lets a host-split bill identify a
-		// participant for payment; it is exposed only on a host-split bill.
-		if b.SplitMode == "host" {
+		// The per-participant token identifies a participant for payment
+		// through the share-token-gated summary. It is exposed only when the
+		// tap-your-name roster is the pay flow: on a host-split bill (always)
+		// and on a closed claim tab (totals are final, so anyone opening the
+		// link — a different device, a borrowed phone — picks their name and
+		// pays). While a claim tab is open the token stays private to the
+		// device/account that joined.
+		if b.SplitMode == "host" || b.Status == statusClosed {
 			entry["participant_token"] = p.token
 		}
 		partsOut = append(partsOut, entry)

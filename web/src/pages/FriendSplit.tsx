@@ -123,14 +123,20 @@ export default function FriendSplit() {
   useEffect(() => {
     // refresh() is async — setState runs after the await, not synchronously.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (bill && (participantToken || isHostSplit)) void refresh();
+    // The roster (host-split always; a claim tab once closed) needs the
+    // summary before any identity is picked, so fetch it pre-participant too.
+    if (bill && (participantToken || isHostSplit || bill.status === "closed"))
+      void refresh();
   }, [bill, participantToken, isHostSplit, refresh]);
 
   // While a claim-mode tab is open, a friend's share can change under them —
   // others claiming, the host closing the tab. Poll the summary so the page
   // follows along (and flips into settle-up mode) without a manual refresh.
   useEffect(() => {
-    if (!bill || isHostSplit || !participantToken) return;
+    // Poll for a joined friend (their share and the close can change under
+    // them) and for the closed-tab roster (paid ✓ marks land live).
+    if (!bill || isHostSplit) return;
+    if (!participantToken && bill.status !== "closed") return;
     const paid =
       summary?.participants.find((p) => p.id === participantId)
         ?.payment_status === "paid";
@@ -339,10 +345,12 @@ export default function FriendSplit() {
     );
   }
 
-  /* ── Host-split identity picker ──────────────────────────────────── */
-  // For a host-managed split the host already assigned items; the friend
-  // just taps which person they are, then pays. No self-claiming.
-  if (isHostSplit && !participantToken) {
+  /* ── Identity picker: host-split always; a claim tab once closed ─── */
+  // The tap-your-name roster is the pay flow whenever self-serve identity
+  // isn't available: a host-managed split (the host assigned the items) and
+  // a closed claim tab (totals are final, and the friend may be on a device
+  // that never joined — the server exposes pay tokens for both cases).
+  if ((isHostSplit || bill.status === "closed") && !participantToken) {
     if (!summary) {
       return (
         <PaperApp>
@@ -357,9 +365,9 @@ export default function FriendSplit() {
       );
     }
     const fmtH = (c: number) => formatMoney(c, bill.currency);
-    const pickable = summary.participants.filter(
-      (p) => p.host_managed && !p.is_host,
-    );
+    const pickable = isHostSplit
+      ? summary.participants.filter((p) => p.host_managed && !p.is_host)
+      : summary.participants;
     const shareOf = (pid: string) =>
       summary.split.participants.find((s) => s.participant_id === pid);
     // "total split" recap — the sum the listed friends owe the host.
@@ -390,7 +398,9 @@ export default function FriendSplit() {
               margin: "12px auto 0",
             }}
           >
-            The host already split this. Tap your name to pay.
+            {isHostSplit
+              ? "The host already split this. Tap your name to pay."
+              : "The tab is closed and everyone's total is final. Tap your name to pay."}
           </p>
 
           {error && (
@@ -401,7 +411,9 @@ export default function FriendSplit() {
 
           {pickable.length === 0 ? (
             <p className="body muted center mt-6" style={{ fontSize: 13 }}>
-              No one to pick yet — check back once the host finishes.
+              {isHostSplit
+                ? "No one to pick yet — check back once the host finishes."
+                : "No one had joined this tab before it closed — ask the host to reopen it."}
             </p>
           ) : (
             <>
@@ -529,31 +541,8 @@ export default function FriendSplit() {
     );
   }
 
-  /* ── Join ────────────────────────────────────────────────────────── */
+  /* ── Join (claim mode, open tab — a closed tab lands on the roster) ── */
   if (!participantToken) {
-    // A closed tab is settling up — the server rejects new joins, so land
-    // arriving friends on an explanation instead of a doomed join form.
-    if (bill.status === "closed") {
-      return (
-        <PaperApp>
-          <div
-            className="page-center"
-            style={{ alignItems: "center", justifyContent: "center" }}
-          >
-            <Brand size={56} />
-            <p className="eyebrow mt-6">Tab closed</p>
-            <p
-              className="body muted mt-2 center"
-              style={{ fontSize: 13, maxWidth: 260 }}
-            >
-              The host has closed {bill.restaurant || "this tab"} for settling
-              up, so no one new can join. If you're missing from the split, ask
-              the host to reopen it.
-            </p>
-          </div>
-        </PaperApp>
-      );
-    }
     return (
       <PaperApp>
         <div className="page-center">
@@ -769,7 +758,7 @@ export default function FriendSplit() {
           <p className="body muted center" style={{ fontSize: 12 }}>
             Paid in Venmo — you can close this page.
           </p>
-          {isHostSplit && (
+          {(isHostSplit || tabClosed) && (
             <button
               className="link-btn"
               onClick={clearIdentity}
@@ -1275,6 +1264,15 @@ export default function FriendSplit() {
             Got everything? Hit “I'm done” — you'll pay once the whole table's
             picked and the host closes the tab.
           </p>
+        )}
+        {tabClosed && (
+          <button
+            className="link-btn"
+            onClick={clearIdentity}
+            style={{ marginTop: 8 }}
+          >
+            Not {firstName}? Pick someone else
+          </button>
         )}
 
         {error && (

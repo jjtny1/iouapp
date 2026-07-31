@@ -1130,6 +1130,31 @@ func TestCloseTab(t *testing.T) {
 		}
 	})
 
+	// participantTokens returns each participant's exposed pay token (or "")
+	// from the share-token-gated summary.
+	participantTokens := func() []string {
+		var s struct {
+			Participants []struct {
+				ParticipantToken string `json:"participant_token"`
+			} `json:"participants"`
+		}
+		e.doJSON(e.newClient(), http.MethodGet,
+			"/api/bills/"+billID+"/summary?t="+friendToken, nil, http.StatusOK, &s)
+		tokens := make([]string, 0, len(s.Participants))
+		for _, p := range s.Participants {
+			tokens = append(tokens, p.ParticipantToken)
+		}
+		return tokens
+	}
+
+	t.Run("open tab keeps pay tokens private", func(t *testing.T) {
+		for _, tok := range participantTokens() {
+			if tok != "" {
+				t.Fatal("open claim tab must not expose participant tokens in the summary")
+			}
+		}
+	})
+
 	t.Run("host closes the tab", func(t *testing.T) {
 		var summary struct {
 			Bill struct {
@@ -1140,6 +1165,18 @@ func TestCloseTab(t *testing.T) {
 			map[string]bool{"closed": true}, http.StatusOK, &summary)
 		if summary.Bill.Status != "closed" {
 			t.Errorf("status after close = %q, want closed", summary.Bill.Status)
+		}
+	})
+
+	t.Run("closed tab exposes pay tokens for the roster", func(t *testing.T) {
+		tokens := participantTokens()
+		if len(tokens) == 0 {
+			t.Fatal("expected participants in the summary")
+		}
+		for _, tok := range tokens {
+			if tok == "" {
+				t.Fatal("closed claim tab should expose each participant's pay token")
+			}
 		}
 	})
 
