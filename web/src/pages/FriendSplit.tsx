@@ -17,10 +17,6 @@ const isMobile =
   typeof navigator !== "undefined" &&
   /iphone|ipad|ipod|android/i.test(navigator.userAgent);
 
-// MAX_SHARE caps how many ways one dish can be declared shared; it mirrors the
-// server's clamp so the stepper never offers an amount the API would reject.
-const MAX_SHARE = 20;
-
 function tokenKey(billId: string): string {
   return `iou:participant:${billId}`;
 }
@@ -232,22 +228,16 @@ export default function FriendSplit() {
     }
   }
 
-  // toggleItem claims an item (as a whole item, share_count 1) or drops it.
-  // Claims are locked once the host closes the tab (the server enforces it).
+  // toggleItem claims an item or drops it. Sharing needs no declaration: an
+  // item splits evenly between everyone who taps it (the server's effective
+  // denominator is the claimer count), and totals only become payable once
+  // the host closes the tab — so the split is allowed to converge as sharers
+  // trickle in. Claims are locked once the tab closes (server-enforced).
   async function toggleItem(itemId: string) {
     if (tabClosed) return;
     const claims = myClaims();
     if (claims.has(itemId)) claims.delete(itemId);
     else claims.set(itemId, 1);
-    await saveClaims(claims);
-  }
-
-  // setShareCount changes how many ways a claimed dish is split.
-  async function setShareCount(itemId: string, count: number) {
-    if (tabClosed) return;
-    const claims = myClaims();
-    if (!claims.has(itemId)) return;
-    claims.set(itemId, Math.min(MAX_SHARE, Math.max(1, count)));
     await saveClaims(claims);
   }
 
@@ -1132,12 +1122,12 @@ export default function FriendSplit() {
         <p className="body muted mt-2">
           {tabClosed
             ? "The host closed the tab — claims are locked and your share is final."
-            : "Tap what you ordered. Shared a dish? Set how many ways with ＋."}
+            : "Tap what you ordered. Shared a dish? Everyone who had it just taps it — it splits evenly."}
         </p>
         {!tabClosed && (
           <p className="body muted mt-1" style={{ fontSize: 12 }}>
-            Your share can still shift while friends are claiming — you'll pay
-            once the host closes the tab.
+            Your total settles once everyone's picked and the host closes the
+            tab — that's when you pay.
           </p>
         )}
 
@@ -1248,45 +1238,11 @@ export default function FriendSplit() {
                     )}
                   </div>
                 </button>
-                {mine && tabClosed && denom > 1 && (
+                {mine && denom > 1 && (
                   <div className="share-stepper">
                     <span className="share-stepper-label">
                       Split {denom} ways
                     </span>
-                  </div>
-                )}
-                {mine && !tabClosed && (
-                  <div className="share-stepper">
-                    <span className="share-stepper-label">
-                      {denom > 1
-                        ? `Split ${denom} ways`
-                        : "Just you — tap ＋ to share"}
-                    </span>
-                    <div
-                      className="stepper"
-                      role="group"
-                      aria-label="how many ways shared"
-                    >
-                      <button
-                        type="button"
-                        className="step-btn"
-                        disabled={myCount <= 1}
-                        aria-label="fewer people"
-                        onClick={() => setShareCount(it.id, myCount - 1)}
-                      >
-                        −
-                      </button>
-                      <span className="step-val mono">{myCount}</span>
-                      <button
-                        type="button"
-                        className="step-btn"
-                        disabled={myCount >= MAX_SHARE}
-                        aria-label="more people"
-                        onClick={() => setShareCount(it.id, myCount + 1)}
-                      >
-                        +
-                      </button>
-                    </div>
                   </div>
                 )}
               </div>

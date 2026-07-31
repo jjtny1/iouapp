@@ -430,29 +430,27 @@ count)` shares — shares beyond the joined participants go to `unclaimed` so
   each friend claim their own unit (e.g. two people each pick one of two
   Cokes) instead of sharing a single multi-quantity checkbox. The `items`
   table has no `qty` column.
-- **A claim carries a `share_count` for splitting a shared dish.** `claims`
-  has a `share_count` column (default 1): a friend who taps an item declares
-  how many ways it's shared with the headcount stepper, and pays `1/N` of it.
-  `split.splitItem` gives each claimer an _effective denominator_ of
-  `max(share_count, claimer count)`, which is the elegant load-bearing rule:
-  it is never below the claimer count, so the item never over-collects and a
-  lone first-tapper who sets "3 ways" is charged a third immediately (the rest
-  stays unclaimed); when nobody sets a count it collapses to the old implicit
-  even split (`max(1, m) == m`). A claimer is never charged more than the
-  `1/N` they declared. The split engine takes `[]split.Claim`
-  (`{ParticipantID, ShareCount}`), not bare participant IDs. The
-  `PUT …/claims` API accepts the current `claims:[{item_id,share_count}]`
-  shape and still the legacy `item_ids:[…]` (each an implicit count of 1);
-  `share_count` is server-clamped to `[1, 20]`. The `claims` table is
-  INSERTed from _two_ places: `handleSetClaims` lists `share_count`
-  explicitly, but `autosplit.applyAutoSplit` inserts `(item_id,
-participant_id)` only and relies on the column's `DEFAULT 1`. That works
-  because a host-assigned (auto-split) claim _is_ a whole-item claim — `1`
-  is the semantically correct default. Don't change `share_count`'s default
-  or meaning without auditing both INSERT sites.
+- **A shared dish splits by whoever taps it — no declared headcount in the
+  UI.** The friend page has no "split N ways" stepper: everyone who had a
+  dish just taps it, `split.splitItem` divides it by the claimer count, and
+  the number is allowed to converge as sharers trickle in because payment
+  waits for the host's settle-up close (see `bills.status`). The engine and
+  API still carry a per-claim `share_count` (default 1) with an _effective
+  denominator_ of `max(share_count, claimer count)` — never below the claimer
+  count, so the item never over-collects; with every count at 1 it is exactly
+  the even claimer split. Keep the column and rule: legacy claims may hold
+  counts > 1, `PUT …/claims` still accepts `claims:[{item_id,share_count}]`
+  (server-clamped `[1, 20]`) and the legacy `item_ids:[…]` shape, and the
+  split engine takes `[]split.Claim` (`{ParticipantID, ShareCount}`), not
+  bare participant IDs. The `claims` table is INSERTed from _two_ places:
+  `handleSetClaims` lists `share_count` explicitly (the UI always sends 1),
+  and `autosplit.applyAutoSplit` inserts `(item_id, participant_id)` only,
+  relying on the column's `DEFAULT 1` — semantically correct, a host-assigned
+  claim is a whole-item claim. Don't change `share_count`'s default or
+  meaning without auditing both INSERT sites.
 - **`FriendSplit` claim updates are optimistic, with a request counter to
-  resolve out-of-order responses.** `toggleItem` / `setShareCount` mutate a
-  fresh claims `Map` and call `saveClaims`, which stashes the map in a
+  resolve out-of-order responses.** `toggleItem` mutates a
+  fresh claims `Map` and calls `saveClaims`, which stashes the map in a
   `pendingClaims` state _before_ awaiting the API. The checkboxes, per-item
   denominators, and the "You owe" total all read from `pendingClaims` when
   it's set (else the live `summary`), so a tap shows immediately instead of
