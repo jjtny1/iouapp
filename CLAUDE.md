@@ -448,6 +448,17 @@ count)` shares — shares beyond the joined participants go to `unclaimed` so
   relying on the column's `DEFAULT 1` — semantically correct, a host-assigned
   claim is a whole-item claim. Don't change `share_count`'s default or
   meaning without auditing both INSERT sites.
+- **`participants.done` is the friend's "I'm done picking" signal.** On an
+  open claim-mode tab the friend's primary CTA is "I'm done"
+  (`POST /api/bills/{id}/done`, participant-token authed, 409 once the tab is
+  closed), which lands them on a waiting view — their picks, running total,
+  and who's still picking — instead of a dead grayed-out Pay button. It is a
+  _signal, not a lock_: `handleSetClaims` clears the flag whenever the
+  participant edits their claims (so "Change my picks" just works), and only
+  the host's close actually locks the split. The host's Share step shows "N
+  of M finished picking" and an "everyone's done — close the tab" callout,
+  polling the summary every 8s while the tab is open (the friend page polls
+  too), so the whole done → close → pay handoff needs no manual refresh.
 - **`FriendSplit` claim updates are optimistic, with a request counter to
   resolve out-of-order responses.** `toggleItem` mutates a
   fresh claims `Map` and calls `saveClaims`, which stashes the map in a

@@ -61,6 +61,10 @@ CREATE TABLE IF NOT EXISTS items (
 -- user_id links the participant to the account of the friend who joined
 -- while logged in; NULL when the friend has no account (joining never
 -- requires one). It powers the "tabs you joined" list on Home.
+-- done flags a friend who has finished picking their items on an open
+-- claim-mode tab. It is a signal, not a lock (the host's close is the lock):
+-- it drives the "everyone's done" progress the host sees before closing, and
+-- editing claims clears it again.
 CREATE TABLE IF NOT EXISTS participants (
     id                TEXT PRIMARY KEY,
     bill_id           TEXT NOT NULL REFERENCES bills(id),
@@ -69,6 +73,7 @@ CREATE TABLE IF NOT EXISTS participants (
     host_managed      INTEGER NOT NULL DEFAULT 0,
     is_host           INTEGER NOT NULL DEFAULT 0,
     user_id           TEXT REFERENCES users(id),
+    done              INTEGER NOT NULL DEFAULT 0,
     created_at        INTEGER NOT NULL
 );
 

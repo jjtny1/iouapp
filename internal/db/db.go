@@ -41,6 +41,10 @@ var migrations = []string{
 	// stays NULL for friends with no account, so joining never requires one;
 	// when set it lets Home show the user the tabs they joined.
 	`ALTER TABLE participants ADD COLUMN user_id TEXT REFERENCES users(id)`,
+	// done flags a friend who has finished picking on an open claim-mode tab —
+	// a signal for the host's "everyone's done" progress, cleared whenever the
+	// participant edits their claims. The host's close remains the real lock.
+	`ALTER TABLE participants ADD COLUMN done INTEGER NOT NULL DEFAULT 0`,
 }
 
 type DB struct {
