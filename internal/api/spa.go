@@ -25,9 +25,18 @@ func spaHandler(dir string) http.Handler {
 			return
 		}
 		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			// Vite content-hashes everything under /assets, so those files
+			// are safe to cache forever; anything else (index.html included)
+			// must revalidate or a deploy leaves browsers on a stale UI.
+			if strings.HasPrefix(r.URL.Path, "/assets/") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			} else {
+				w.Header().Set("Cache-Control", "no-cache")
+			}
 			http.ServeFile(w, r, path)
 			return
 		}
+		w.Header().Set("Cache-Control", "no-cache")
 		http.ServeFile(w, r, index)
 	})
 }
