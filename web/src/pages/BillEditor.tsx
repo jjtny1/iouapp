@@ -368,6 +368,17 @@ export default function BillEditor() {
     window.scrollTo({ top: 0 });
   }, [step]);
 
+  // On the Share step of an open claim-mode tab, poll the summary so the
+  // host watches joins, claims and "done picking" flags land live — the
+  // "everyone's done, close the tab" moment shouldn't need a manual refresh.
+  useEffect(() => {
+    if (!id || step !== "share") return;
+    if (!bill || bill.split_mode === "host" || bill.status === "closed") return;
+    const t = setInterval(refreshSummary, 8000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, step, bill?.split_mode, bill?.status]);
+
   // A bill that's already host-split opens straight on the auto-split form —
   // the host made the choice on an earlier visit.
   useEffect(() => {
@@ -1533,6 +1544,25 @@ export default function BillEditor() {
                     ? "The tab is closed — claims are locked, every share is final, and friends can pay. Reopen it if someone still needs to change their claims."
                     : "While the tab is open friends can keep claiming, so shares stay provisional. Once everyone's picked, close the tab — that locks the claims and lets friends pay their final share."}
                 </p>
+                {!tabClosed && joined.length > 0 && (
+                  <p
+                    className="body mt-2"
+                    style={{
+                      fontSize: 12,
+                      color: joined.every((p) => p.done)
+                        ? "var(--accent-deep)"
+                        : "var(--muted)",
+                    }}
+                  >
+                    {joined.every((p) => p.done)
+                      ? `All ${joined.length} ${
+                          joined.length === 1 ? "friend has" : "friends have"
+                        } finished picking ✓ — close the tab to collect.`
+                      : `${joined.filter((p) => p.done).length} of ${
+                          joined.length
+                        } finished picking so far.`}
+                  </p>
+                )}
                 {!tabClosed &&
                   summary &&
                   joined.length > 0 &&
@@ -1593,7 +1623,9 @@ export default function BillEditor() {
                             ? "paid ✓"
                             : p.payment_status === "pending"
                               ? "paying…"
-                              : "claiming…"}
+                              : p.done
+                                ? "done picking ✓"
+                                : "picking…"}
                         </p>
                       </div>
                       <span className="mono" style={{ fontSize: 13 }}>

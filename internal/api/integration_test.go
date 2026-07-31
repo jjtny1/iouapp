@@ -1202,6 +1202,91 @@ func TestCloseTab(t *testing.T) {
 	})
 }
 
+// TestDonePicking covers the friend's "I'm done" signal on an open claim-mode
+// tab: marking done round-trips through the summary, editing claims clears it
+// (the friend is picking again), and it is rejected once the tab is closed.
+func TestDonePicking(t *testing.T) {
+	e := newTestEnv(t)
+	host := e.signIn("host@example.com")
+	bill := e.createBill(host)
+	billID := bill["id"].(string)
+	friendToken := bill["friend_token"].(string)
+	e.uploadReceipt(host, billID, http.StatusOK, nil)
+
+	var friendBill map[string]any
+	e.doJSON(e.newClient(), http.MethodGet, "/api/by-token/"+friendToken,
+		nil, http.StatusOK, &friendBill)
+	item0ID := friendBill["items"].([]any)[0].(map[string]any)["id"].(string)
+
+	var join struct {
+		Participant      struct{ ID string } `json:"participant"`
+		ParticipantToken string              `json:"participant_token"`
+	}
+	e.doJSON(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/participants",
+		map[string]string{"display_name": "Alice", "t": friendToken},
+		http.StatusCreated, &join)
+	e.doJSON(e.newClient(), http.MethodPut, "/api/bills/"+billID+"/claims",
+		map[string]any{"participant_token": join.ParticipantToken,
+			"item_ids": []string{item0ID}}, http.StatusOK, nil)
+
+	doneOf := func(sum []byte) bool {
+		var s struct {
+			Participants []struct {
+				ID   string `json:"id"`
+				Done bool   `json:"done"`
+			} `json:"participants"`
+		}
+		if err := json.Unmarshal(sum, &s); err != nil {
+			t.Fatalf("decode summary: %v", err)
+		}
+		for _, p := range s.Participants {
+			if p.ID == join.Participant.ID {
+				return p.Done
+			}
+		}
+		t.Fatalf("participant %s not in summary", join.Participant.ID)
+		return false
+	}
+
+	t.Run("marking done round-trips", func(t *testing.T) {
+		raw := e.doJSON(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/done",
+			map[string]any{"participant_token": join.ParticipantToken, "done": true},
+			http.StatusOK, nil)
+		if !doneOf(raw) {
+			t.Error("participant should be done after marking done")
+		}
+	})
+
+	t.Run("editing claims clears done", func(t *testing.T) {
+		raw := e.doJSON(e.newClient(), http.MethodPut, "/api/bills/"+billID+"/claims",
+			map[string]any{"participant_token": join.ParticipantToken,
+				"item_ids": []string{}}, http.StatusOK, nil)
+		if doneOf(raw) {
+			t.Error("editing claims should clear the done flag")
+		}
+	})
+
+	t.Run("done is rejected on a closed tab", func(t *testing.T) {
+		e.doJSON(host, http.MethodPost, "/api/bills/"+billID+"/close",
+			map[string]bool{"closed": true}, http.StatusOK, nil)
+		resp, raw := e.do(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/done",
+			bytes.NewReader(mustJSON(t, map[string]any{
+				"participant_token": join.ParticipantToken, "done": true,
+			})), "application/json")
+		if resp.StatusCode != http.StatusConflict {
+			t.Errorf("done on closed tab: status = %d, want 409; body=%s", resp.StatusCode, raw)
+		}
+	})
+
+	t.Run("a wrong token is 404", func(t *testing.T) {
+		e.doJSON(host, http.MethodPost, "/api/bills/"+billID+"/close",
+			map[string]bool{"closed": false}, http.StatusOK, nil)
+		e.doJSON(e.newClient(), http.MethodPost, "/api/bills/"+billID+"/done",
+			map[string]any{"participant_token": "bogus", "done": true},
+			http.StatusNotFound, nil)
+	})
+}
+
 // joinedTabResp mirrors the GET /api/bills/joined payload.
 type joinedTabResp struct {
 	BillID        string `json:"bill_id"`

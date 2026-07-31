@@ -241,6 +241,23 @@ export default function FriendSplit() {
     await saveClaims(claims);
   }
 
+  // setDone flags this friend as finished (or not) picking. Done leads to the
+  // waiting view; the host sees the progress and closes the tab when everyone
+  // is done, which is what finalizes totals and opens payment.
+  const [savingDone, setSavingDone] = useState(false);
+  async function setDone(done: boolean) {
+    if (!bill || !participantToken) return;
+    setSavingDone(true);
+    setError(null);
+    try {
+      setSummary(await api.setDone(bill.id, participantToken, done));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "could not update");
+    } finally {
+      setSavingDone(false);
+    }
+  }
+
   async function openPay() {
     if (!bill || !participantToken) return;
     setPayOpen(true);
@@ -624,6 +641,7 @@ export default function FriendSplit() {
   const myName = myParticipant?.display_name || name || "you";
   const firstName = myName.split(/\s+/)[0];
   const isPaid = myParticipant?.payment_status === "paid";
+  const myDone = !!myParticipant?.done;
   const fmt = (c: number) => formatMoney(c, bill.currency);
 
   // While a claim save is in flight, derive the visible totals from
@@ -1095,6 +1113,134 @@ export default function FriendSplit() {
     );
   }
 
+  /* ── Done picking: waiting for the rest of the table ─────────────── */
+  // The friend said "I'm done" and the tab is still open: show a calm
+  // waiting room — their picks, their running total, who's still choosing —
+  // instead of a claim list with a dead Pay button. The summary poll flips
+  // this straight into the settle-up view when the host closes the tab.
+  if (myDone && !tabClosed) {
+    const myItems = summary.items.filter((it) =>
+      (summary.claims[it.id] ?? []).some((c) => c.participant_id === myId),
+    );
+    const stillPicking = summary.participants.filter(
+      (p) => p.id !== myId && !p.done,
+    );
+    return (
+      <PaperApp>
+        <div className="page" style={{ paddingBottom: 8 }}>
+          <div className="row row-between">
+            <Brand size={26} />
+            <Avatar name={myName} seed={myId ?? myName} />
+          </div>
+
+          <p className="eyebrow mt-4">
+            {bill.restaurant || "The tab"} · {summary.participants.length}{" "}
+            splitting
+          </p>
+          <h2 className="h-section mt-1">All picked, {firstName}.</h2>
+          <p className="body muted mt-2">
+            {stillPicking.length === 0
+              ? "Everyone's done — the host just needs to close the tab, then you pay."
+              : `Waiting on ${
+                  stillPicking.length === 1
+                    ? stillPicking[0].display_name
+                    : `${stillPicking.length} others`
+                } to finish picking. Your total locks in when the host closes the tab.`}
+          </p>
+
+          {error && (
+            <p className="body danger mt-3" style={{ fontSize: 13 }}>
+              {error}
+            </p>
+          )}
+
+          <div className="card mt-4">
+            <p className="eyebrow">Your picks</p>
+            {myItems.length === 0 ? (
+              <p className="body muted mt-2" style={{ fontSize: 13 }}>
+                Nothing claimed — if that's not right, change your picks below.
+              </p>
+            ) : (
+              <div className="col mt-2">
+                {myItems.map((it) => {
+                  const claimers = summary.claims[it.id] ?? [];
+                  const ways = Math.max(1, claimers.length);
+                  return (
+                    <div key={it.id} className="row row-between">
+                      <span style={{ fontSize: 14 }}>
+                        {it.name || "Item"}
+                        {ways > 1 && (
+                          <span
+                            className="mono muted"
+                            style={{ fontSize: 10, marginLeft: 6 }}
+                          >
+                            split {ways} ways so far
+                          </span>
+                        )}
+                      </span>
+                      <span className="mono" style={{ fontSize: 13 }}>
+                        {fmt(Math.round(it.price_cents / ways))}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <hr className="dash" style={{ margin: "10px 0" }} />
+            <div className="row row-between">
+              <span className="body muted" style={{ fontSize: 13 }}>
+                You owe so far
+              </span>
+              <span className="mono" style={{ fontSize: 15, fontWeight: 600 }}>
+                {fmt(owes)}
+              </span>
+            </div>
+            <p className="body muted mt-2" style={{ fontSize: 11 }}>
+              Still approximate — it can shift while others pick, and settles
+              when the host closes the tab.
+            </p>
+          </div>
+
+          <div className="card mt-3">
+            <p className="eyebrow">The table</p>
+            <div className="col mt-2">
+              {summary.participants.map((p) => (
+                <div key={p.id} className="row row-between">
+                  <span className="row gap-2" style={{ alignItems: "center" }}>
+                    <Avatar name={p.display_name} seed={p.id} size="xs" />
+                    <span style={{ fontSize: 13 }}>
+                      {p.id === myId ? "You" : p.display_name}
+                    </span>
+                  </span>
+                  <span
+                    className="mono"
+                    style={{
+                      fontSize: 10.5,
+                      color:
+                        p.done || p.id === myId
+                          ? "var(--accent-deep)"
+                          : "var(--muted)",
+                    }}
+                  >
+                    {p.done || p.id === myId ? "done ✓" : "picking…"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <button
+            className="btn btn-ghost btn-block mt-4"
+            onClick={() => setDone(false)}
+            disabled={savingDone}
+          >
+            {savingDone ? "One sec…" : "Change my picks"}
+          </button>
+        </div>
+      </PaperApp>
+    );
+  }
+
   /* ── Claim (+ pay sheet) ─────────────────────────────────────────── */
   const anyClaim = myId
     ? Object.values(summary.claims).some((entries) =>
@@ -1126,8 +1272,8 @@ export default function FriendSplit() {
         </p>
         {!tabClosed && (
           <p className="body muted mt-1" style={{ fontSize: 12 }}>
-            Your total settles once everyone's picked and the host closes the
-            tab — that's when you pay.
+            Got everything? Hit “I'm done” — you'll pay once the whole table's
+            picked and the host closes the tab.
           </p>
         )}
 
@@ -1263,19 +1409,33 @@ export default function FriendSplit() {
               owes > 0 &&
               extrasCents > 0 && <p className="sub">{owedBreakdown}</p>
             ) : (
-              <p className="sub">pay when the host closes the tab</p>
+              <p className="sub">settles when the whole table's done</p>
             )}
           </div>
-          <button
-            className="btn btn-accent"
-            disabled={!tabClosed || !anyClaim || owes <= 0}
-            onClick={openPay}
-            title={
-              tabClosed ? undefined : "You can pay once the host closes the tab"
-            }
-          >
-            Pay <Icon.Arrow size={12} />
-          </button>
+          {tabClosed ? (
+            <button
+              className="btn btn-accent"
+              disabled={!anyClaim || owes <= 0}
+              onClick={openPay}
+            >
+              Pay <Icon.Arrow size={12} />
+            </button>
+          ) : (
+            <button
+              className="btn btn-accent"
+              disabled={savingDone || !anyClaim}
+              onClick={() => setDone(true)}
+              title={anyClaim ? undefined : "Tap what you ordered first"}
+            >
+              {savingDone ? (
+                "One sec…"
+              ) : (
+                <>
+                  I'm done <Icon.Check size={12} />
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
 

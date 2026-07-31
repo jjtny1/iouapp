@@ -73,6 +73,10 @@ export interface Participant {
   host_managed?: boolean;
   is_host?: boolean;
   participant_token?: string;
+  // done means the friend has finished picking their items on an open
+  // claim-mode tab. A signal for the host's progress view, not a lock —
+  // editing claims clears it; the host's close is what locks the split.
+  done?: boolean;
 }
 
 // PaymentIntent is what the server hands a friend to settle in Venmo: the
@@ -338,6 +342,14 @@ export const api = {
         body: JSON.stringify({ t }),
       },
     ),
+  // setDone marks the friend as finished (or not) picking their items on an
+  // open claim-mode tab — the "I'm done" signal the host's progress view
+  // reads. Editing claims clears it server-side.
+  setDone: (id: string, participant_token: string, done: boolean) =>
+    request<BillSummary>(`/api/bills/${id}/done`, {
+      method: "POST",
+      body: JSON.stringify({ participant_token, done }),
+    }),
   // myParticipant returns the signed-in user's existing participant on a bill,
   // if they joined (or picked an identity) while logged in — so FriendSplit can
   // restore their identity from their account on any device. It rejects with a

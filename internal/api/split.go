@@ -20,6 +20,10 @@ type participant struct {
 	DisplayName string `json:"display_name"`
 	HostManaged bool   `json:"host_managed"`
 	IsHost      bool   `json:"is_host"`
+	// Done means the friend has finished picking their items on an open
+	// claim-mode tab. A signal for the host, not a lock — editing claims
+	// clears it, and only the host's close actually locks the split.
+	Done bool `json:"done"`
 
 	token string
 }
@@ -313,6 +317,14 @@ func (s *Server) handleSetClaims(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Changing claims means the friend is picking again — clear their "done"
+	// flag so the host's everyone's-done progress stays truthful.
+	if _, err := tx.ExecContext(r.Context(),
+		`UPDATE participants SET done = 0 WHERE id = ?`, participantID); err != nil {
+		log.Printf("set claims: clear done: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
 	if err := tx.Commit(); err != nil {
 		log.Printf("set claims: commit: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
@@ -322,6 +334,65 @@ func (s *Server) handleSetClaims(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.buildSummary(r.Context(), b)
 	if err != nil {
 		log.Printf("set claims: summary: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleSetDone marks a friend as finished (or not) picking their items on an
+// open claim-mode tab. Done is the friend's "I'm done" signal: it feeds the
+// host's everyone's-done progress so they know when to close the tab. It is
+// not a lock — the participant can flip it back to keep editing; the host's
+// close is what actually locks the split. On a closed tab it is meaningless
+// (everything is already locked), so it 409s like a claim edit would.
+func (s *Server) handleSetDone(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var req struct {
+		ParticipantToken string `json:"participant_token"`
+		Done             bool   `json:"done"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	b, err := s.loadBill(r.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "bill not found"})
+		return
+	}
+	if err != nil {
+		log.Printf("set done: load: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	if b.Status == statusClosed {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "the host closed the tab — it's settling up now"})
+		return
+	}
+
+	participantID, err := s.participantByToken(r.Context(), b.ID, req.ParticipantToken)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "participant not found"})
+		return
+	}
+	if err != nil {
+		log.Printf("set done: participant: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	if _, err := s.DB.ExecContext(r.Context(),
+		`UPDATE participants SET done = ? WHERE id = ?`, req.Done, participantID); err != nil {
+		log.Printf("set done: update: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	resp, err := s.buildSummary(r.Context(), b)
+	if err != nil {
+		log.Printf("set done: summary: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
@@ -418,6 +489,7 @@ func (s *Server) buildSummary(ctx context.Context, b bill) (map[string]any, erro
 			"display_name":   p.DisplayName,
 			"host_managed":   p.HostManaged,
 			"is_host":        p.IsHost,
+			"done":           p.Done,
 			"payment_status": "none",
 		}
 		if pay, ok := byParticipant[p.ID]; ok {
@@ -443,7 +515,7 @@ func (s *Server) buildSummary(ctx context.Context, b bill) (map[string]any, erro
 // loadParticipants returns a bill's participants ordered by creation time.
 func (s *Server) loadParticipants(ctx context.Context, billID string) ([]participant, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT id, display_name, host_managed, is_host, participant_token FROM participants
+		`SELECT id, display_name, host_managed, is_host, done, participant_token FROM participants
 		 WHERE bill_id = ? ORDER BY created_at, id`, billID)
 	if err != nil {
 		return nil, err
@@ -453,7 +525,7 @@ func (s *Server) loadParticipants(ctx context.Context, billID string) ([]partici
 	parts := []participant{}
 	for rows.Next() {
 		var p participant
-		if err := rows.Scan(&p.ID, &p.DisplayName, &p.HostManaged, &p.IsHost, &p.token); err != nil {
+		if err := rows.Scan(&p.ID, &p.DisplayName, &p.HostManaged, &p.IsHost, &p.Done, &p.token); err != nil {
 			return nil, err
 		}
 		parts = append(parts, p)
