@@ -280,6 +280,7 @@ export default function BillEditor() {
   const [summary, setSummary] = useState<BillSummary | null>(null);
   const [venmoHandle, setVenmoHandle] = useState(user?.venmo_handle ?? "");
   const [savingHandle, setSavingHandle] = useState(false);
+  const [closingTab, setClosingTab] = useState(false);
 
   /* ── Audio split ─────────────────────────────────────────────────── */
   const audioFileRef = useRef<HTMLInputElement>(null);
@@ -482,6 +483,29 @@ export default function BillEditor() {
       setError(err instanceof Error ? err.message : "could not save handle");
     } finally {
       setSavingHandle(false);
+    }
+  }
+
+  // toggleClosed is the settle-up switch for a claim-mode tab: closing locks
+  // joins and claims (making every share final) and lets friends pay; the
+  // host can reopen if someone still needs to fix their claims.
+  async function toggleClosed() {
+    if (!id || !bill) return;
+    setError(null);
+    setClosingTab(true);
+    try {
+      const res = await api.closeBill(id, bill.status !== "closed");
+      setSummary(res);
+      setBill((b) => (b ? { ...b, status: res.bill.status } : b));
+      showToast(
+        res.bill.status === "closed"
+          ? "Tab closed — friends can pay now"
+          : "Tab reopened",
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "could not update the tab");
+    } finally {
+      setClosingTab(false);
     }
   }
 
@@ -708,6 +732,7 @@ export default function BillEditor() {
     serviceCents;
   const fmt = (c: number) => formatMoney(c, currency);
   const joined = summary?.participants ?? [];
+  const tabClosed = bill?.status === "closed";
 
   // The review step is always reachable; split and share need a bill that has
   // been saved at least once (the server-side item ids back both).
@@ -1480,6 +1505,52 @@ export default function BillEditor() {
               <p className="body muted mt-4" style={{ fontSize: 13 }}>
                 Save the tab to generate a share link.
               </p>
+            )}
+
+            {/* Settle up — the claim-mode tab's close switch. While open,
+                friends claim and every share is provisional; closing locks
+                claims + joins and is what unlocks paying. A host-split tab
+                has no claiming phase, so it has no switch. */}
+            {bill.split_mode !== "host" && (
+              <div className="card mt-4">
+                <div className="row row-between">
+                  <span className="eyebrow">Settle up</span>
+                  <span className="eyebrow muted">
+                    {tabClosed ? "closed ✓" : "tab open"}
+                  </span>
+                </div>
+                <p className="body muted mt-2" style={{ fontSize: 12 }}>
+                  {tabClosed
+                    ? "The tab is closed — claims are locked, every share is final, and friends can pay. Reopen it if someone still needs to change their claims."
+                    : "While the tab is open friends can keep claiming, so shares stay provisional. Once everyone's picked, close the tab — that locks the claims and lets friends pay their final share."}
+                </p>
+                {!tabClosed &&
+                  summary &&
+                  joined.length > 0 &&
+                  summary.split.unclaimed_cents > 0 && (
+                    <p className="body muted mt-2" style={{ fontSize: 11 }}>
+                      {fmt(summary.split.unclaimed_cents)} of the tab is still
+                      unclaimed — anything unclaimed when you close is on you.
+                    </p>
+                  )}
+                <button
+                  className={`btn btn-block mt-3${
+                    tabClosed ? " btn-ghost" : " btn-accent"
+                  }`}
+                  onClick={toggleClosed}
+                  disabled={closingTab}
+                >
+                  {closingTab ? (
+                    "Saving…"
+                  ) : tabClosed ? (
+                    "Reopen the tab"
+                  ) : (
+                    <>
+                      Close the tab &amp; settle up <Icon.Arrow size={12} />
+                    </>
+                  )}
+                </button>
+              </div>
             )}
 
             {/* Joined */}

@@ -73,12 +73,28 @@ export default function FriendSplit() {
   }, [bill, token]);
 
   const isHostSplit = bill?.split_mode === "host";
+  // The summary is refreshed continuously, so its bill carries the freshest
+  // status; the one-shot bill load only covers the pre-join screens.
+  const tabClosed = (summary?.bill.status ?? bill?.status) === "closed";
 
   useEffect(() => {
     // refresh() is async — setState runs after the await, not synchronously.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (bill && (participantToken || isHostSplit)) void refresh();
   }, [bill, participantToken, isHostSplit, refresh]);
+
+  // While a claim-mode tab is open, a friend's share can change under them —
+  // others claiming, the host closing the tab. Poll the summary so the page
+  // follows along (and flips into settle-up mode) without a manual refresh.
+  useEffect(() => {
+    if (!bill || isHostSplit || !participantToken) return;
+    const paid =
+      summary?.participants.find((p) => p.id === participantId)
+        ?.payment_status === "paid";
+    if (paid) return; // settled — nothing left to follow
+    const t = setInterval(() => void refresh(), 8000);
+    return () => clearInterval(t);
+  }, [bill, isHostSplit, participantToken, participantId, summary, refresh]);
 
   async function onJoin(e: FormEvent) {
     e.preventDefault();
@@ -149,7 +165,9 @@ export default function FriendSplit() {
   }
 
   // toggleItem claims an item (as a whole item, share_count 1) or drops it.
+  // Claims are locked once the host closes the tab (the server enforces it).
   async function toggleItem(itemId: string) {
+    if (tabClosed) return;
     const claims = myClaims();
     if (claims.has(itemId)) claims.delete(itemId);
     else claims.set(itemId, 1);
@@ -158,6 +176,7 @@ export default function FriendSplit() {
 
   // setShareCount changes how many ways a claimed dish is split.
   async function setShareCount(itemId: string, count: number) {
+    if (tabClosed) return;
     const claims = myClaims();
     if (!claims.has(itemId)) return;
     claims.set(itemId, Math.min(MAX_SHARE, Math.max(1, count)));
@@ -437,6 +456,29 @@ export default function FriendSplit() {
 
   /* ── Join ────────────────────────────────────────────────────────── */
   if (!participantToken) {
+    // A closed tab is settling up — the server rejects new joins, so land
+    // arriving friends on an explanation instead of a doomed join form.
+    if (bill.status === "closed") {
+      return (
+        <PaperApp>
+          <div
+            className="page-center"
+            style={{ alignItems: "center", justifyContent: "center" }}
+          >
+            <Brand size={56} />
+            <p className="eyebrow mt-6">Tab closed</p>
+            <p
+              className="body muted mt-2 center"
+              style={{ fontSize: 13, maxWidth: 260 }}
+            >
+              The host has closed {bill.restaurant || "this tab"} for settling
+              up, so no one new can join. If you're missing from the split, ask
+              the host to reopen it.
+            </p>
+          </div>
+        </PaperApp>
+      );
+    }
     return (
       <PaperApp>
         <div className="page-center">
@@ -990,10 +1032,22 @@ export default function FriendSplit() {
           {bill.restaurant || "The tab"} · {summary.participants.length}{" "}
           splitting
         </p>
-        <h2 className="h-section mt-1">What did you get, {firstName}?</h2>
+        <h2 className="h-section mt-1">
+          {tabClosed
+            ? `Time to settle up, ${firstName}.`
+            : `What did you get, ${firstName}?`}
+        </h2>
         <p className="body muted mt-2">
-          Tap what you ordered. Shared a dish? Set how many ways with ＋.
+          {tabClosed
+            ? "The host closed the tab — claims are locked and your share is final."
+            : "Tap what you ordered. Shared a dish? Set how many ways with ＋."}
         </p>
+        {!tabClosed && (
+          <p className="body muted mt-1" style={{ fontSize: 12 }}>
+            Your share can still shift while friends are claiming — you'll pay
+            once the host closes the tab.
+          </p>
+        )}
 
         {error && (
           <p className="body danger mt-3" style={{ fontSize: 13 }}>
@@ -1042,6 +1096,8 @@ export default function FriendSplit() {
                 <button
                   className="claim-item"
                   onClick={() => toggleItem(it.id)}
+                  disabled={tabClosed}
+                  style={tabClosed && !mine ? { opacity: 0.55 } : undefined}
                 >
                   <span className={`claim-box${mine ? " checked" : ""}`}>
                     <Icon.Check size={12} />
@@ -1087,7 +1143,14 @@ export default function FriendSplit() {
                     )}
                   </div>
                 </button>
-                {mine && (
+                {mine && tabClosed && denom > 1 && (
+                  <div className="share-stepper">
+                    <span className="share-stepper-label">
+                      Split {denom} ways
+                    </span>
+                  </div>
+                )}
+                {mine && !tabClosed && (
                   <div className="share-stepper">
                     <span className="share-stepper-label">
                       {denom > 1
@@ -1128,16 +1191,22 @@ export default function FriendSplit() {
 
         <div className="totalbar">
           <div>
-            <p className="label">You owe</p>
+            <p className="label">{tabClosed ? "You owe" : "You owe so far"}</p>
             <p className="amt">{fmt(owes)}</p>
-            {owes > 0 && extrasCents > 0 && (
-              <p className="sub">{owedBreakdown}</p>
+            {tabClosed ? (
+              owes > 0 &&
+              extrasCents > 0 && <p className="sub">{owedBreakdown}</p>
+            ) : (
+              <p className="sub">pay when the host closes the tab</p>
             )}
           </div>
           <button
             className="btn btn-accent"
-            disabled={!anyClaim || owes <= 0}
+            disabled={!tabClosed || !anyClaim || owes <= 0}
             onClick={openPay}
+            title={
+              tabClosed ? undefined : "You can pay once the host closes the tab"
+            }
           >
             Pay <Icon.Arrow size={12} />
           </button>

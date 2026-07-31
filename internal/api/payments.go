@@ -214,6 +214,18 @@ func (s *Server) handlePay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// On a claim-mode bill shares stay provisional while friends are still
+	// claiming, so payment waits for the host to close the tab. A host-split
+	// bill's shares are final from the moment the host assigns them — no gate.
+	// (The already-paid short-circuit above stays reachable so a settled friend
+	// still sees their receipt even if the host has since reopened the tab.)
+	if b.SplitMode != "host" && b.Status != statusClosed {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "the tab is still open — you can pay once the host closes it",
+		})
+		return
+	}
+
 	handle, err := s.hostVenmoHandle(r.Context(), b.hostUserID)
 	if err != nil {
 		log.Printf("pay: host handle: %v", err)
